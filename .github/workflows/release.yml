@@ -1,50 +1,83 @@
 name: Build EasyNoteVault (Windows)
 
 on:
+  # 自动：push tag
   push:
     tags:
       - "v*"
+
+  # 手动：输入版本号
   workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Release version (e.g. v1.0.3)"
+        required: false
+        default: ""
 
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
+      # 1️⃣ 拉取代码
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 2️⃣ 安装 .NET
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 6.0.x
+          dotnet-version: 8.0.x
 
+      # 3️⃣ 构建
       - name: Build
         shell: pwsh
         run: windows/scripts/build.ps1
 
+      # 4️⃣ 打包 exe
       - name: Publish
         shell: pwsh
         run: windows/scripts/publish.ps1
 
-      - name: Release Prepare
+      # 5️⃣ 解码签名证书（可选）
+      - name: Decode signing certificate
+        if: ${{ secrets.SIGN_CERT != '' }}
+        shell: pwsh
+        run: |
+          echo "${{ secrets.SIGN_CERT }}" | base64 -d > cert.pfx
+
+      # 6️⃣ 签名 exe（可选）
+      - name: Sign exe
+        if: ${{ secrets.SIGN_CERT != '' }}
+        shell: pwsh
+        run: |
+          windows/scripts/sign.ps1 `
+            -ExePath artifacts/windows/EasyNoteVault.exe `
+            -CertPath cert.pfx `
+            -CertPassword "${{ secrets.SIGN_PASSWORD }}"
+
+      # 7️⃣ 整理发布文件
+      - name: Release prepare
         shell: pwsh
         run: windows/scripts/release.ps1
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: EasyNoteVault-windows
-          path: dist/windows/
+      # 8️⃣ ⭐ 手动触发时：创建 tag
+      - name: Create tag (manual release)
+        if: github.event_name == 'workflow_dispatch' && inputs.release_version != ''
+        shell: pwsh
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git tag ${{ inputs.release_version }}
+          git push origin ${{ inputs.release_version }}
+
+      # 9️⃣ ⭐ 创建 GitHub Release（自动 or 手动都能进）
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || inputs.release_version != ''
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/windows/*.zip
+          tag_name: ${{ inputs.release_version || github.ref_name }}
+          files: dist/windows/**/*.zip
           overwrite_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
