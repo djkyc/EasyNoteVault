@@ -37,9 +37,14 @@ jobs:
           name: EasyNoteVault-windows
           path: dist/windows/
       - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: dist/windows/*.zip
+          overwrite_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
