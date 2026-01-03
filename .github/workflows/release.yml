@@ -12,23 +12,30 @@ jobs:
     runs-on: windows-latest
 
     steps:
+      # 1. 拉取代码
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2. 安装 .NET（与你的 net8.0-windows 对齐）
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
 
+      # 3. 构建
       - name: Build
         shell: pwsh
-        run: windows/scripts/build.ps1
+        run: |
+          windows/scripts/build.ps1
 
+      # 4. 发布（生成 exe）
       - name: Publish
         shell: pwsh
-        run: windows/scripts/publish.ps1
+        run: |
+          windows/scripts/publish.ps1
 
-      # ✅ 修正点：正确解码 SIGN_CERT（Windows + pwsh）
+      # 5. 解码签名证书（Windows + PowerShell 正确方式）
+      #    如果你没配置 SIGN_CERT，这一步会自动跳过
       - name: Decode signing certificate
         if: ${{ secrets.SIGN_CERT != '' }}
         shell: pwsh
@@ -36,6 +43,7 @@ jobs:
           $bytes = [System.Convert]::FromBase64String("${{ secrets.SIGN_CERT }}")
           [System.IO.File]::WriteAllBytes("cert.pfx", $bytes)
 
+      # 6. 签名 exe（仅在有证书时执行）
       - name: Sign executable
         if: ${{ secrets.SIGN_CERT != '' }}
         shell: pwsh
@@ -45,10 +53,13 @@ jobs:
             -CertPath cert.pfx `
             -CertPassword "${{ secrets.SIGN_PASSWORD }}"
 
+      # 7. 整理发布文件（生成 dist/windows/*.zip）
       - name: Prepare release files
         shell: pwsh
-        run: windows/scripts/release.ps1
+        run: |
+          windows/scripts/release.ps1
 
+      # 8. 创建 git tag（手动发布一定要有 tag）
       - name: Create git tag
         shell: pwsh
         run: |
@@ -57,6 +68,7 @@ jobs:
           git tag ${{ inputs.release_version }}
           git push origin ${{ inputs.release_version }}
 
+      # 9. 创建 GitHub Release
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
