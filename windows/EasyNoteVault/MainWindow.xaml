@@ -12,7 +12,7 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <!-- 顶部标题 -->
+        <!-- 标题 -->
         <TextBlock Text="EasyNoteVault"
                    FontSize="22"
                    FontWeight="Bold"
@@ -26,9 +26,20 @@
                   CanUserDeleteRows="True"
                   IsReadOnly="False"
                   SelectionUnit="Cell"
-                  HeadersVisibility="Column">
+                  HeadersVisibility="Column"
+                  SelectionMode="Single">
 
+            <!-- 右键菜单 -->
+            <DataGrid.ContextMenu>
+                <ContextMenu>
+                    <MenuItem Header="粘贴"
+                              Click="PasteMenuItem_Click"/>
+                </ContextMenu>
+            </DataGrid.ContextMenu>
+
+            <!-- 列定义 -->
             <DataGrid.Columns>
+
                 <DataGridTextColumn Header="名称"
                                     Binding="{Binding Name}"
                                     Width="150"/>
@@ -48,6 +59,7 @@
                 <DataGridTextColumn Header="备注"
                                     Binding="{Binding Remark}"
                                     Width="*"/>
+
             </DataGrid.Columns>
         </DataGrid>
     </Grid>
