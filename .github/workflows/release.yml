@@ -7,37 +7,43 @@ on:
         description: "Release version (e.g. v1.0.0)"
         required: true
 
+# 🔑 关键：允许写仓库（解决 403）
+permissions:
+  contents: write
+
 jobs:
   release:
     runs-on: windows-latest
 
-    # 🔑 先把 secrets 映射成 env（这是关键）
+    # 把 secrets 映射成 env，供 if 判断使用
     env:
       SIGN_CERT: ${{ secrets.SIGN_CERT }}
       SIGN_PASSWORD: ${{ secrets.SIGN_PASSWORD }}
 
     steps:
-      # 1. 拉取代码
+      # 1️⃣ Checkout（带 token）
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 必须，tag push 需要完整历史
 
-      # 2. 安装 .NET
+      # 2️⃣ Setup .NET
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
 
-      # 3. 构建
+      # 3️⃣ Build
       - name: Build
         shell: pwsh
         run: windows/scripts/build.ps1
 
-      # 4. 发布
+      # 4️⃣ Publish
       - name: Publish
         shell: pwsh
         run: windows/scripts/publish.ps1
 
-      # 5. 解码签名证书（只有在 SIGN_CERT 存在时才做）
+      # 5️⃣ Decode signing cert（可选）
       - name: Decode signing certificate
         if: env.SIGN_CERT != ''
         shell: pwsh
@@ -45,7 +51,7 @@ jobs:
           $bytes = [System.Convert]::FromBase64String($env:SIGN_CERT)
           [System.IO.File]::WriteAllBytes("cert.pfx", $bytes)
 
-      # 6. 签名 exe（同样只在有证书时）
+      # 6️⃣ Sign exe（自动找 signtool，找不到就跳过）
       - name: Sign executable
         if: env.SIGN_CERT != ''
         shell: pwsh
@@ -55,12 +61,12 @@ jobs:
             -CertPath cert.pfx `
             -CertPassword $env:SIGN_PASSWORD
 
-      # 7. 整理发布文件
+      # 7️⃣ Prepare release files
       - name: Prepare release files
         shell: pwsh
         run: windows/scripts/release.ps1
 
-      # 8. 创建 tag
+      # 8️⃣ Create git tag（现在不会 403 了）
       - name: Create git tag
         shell: pwsh
         run: |
@@ -69,7 +75,7 @@ jobs:
           git tag ${{ inputs.release_version }}
           git push origin ${{ inputs.release_version }}
 
-      # 9. 创建 GitHub Release
+      # 9️⃣ Create GitHub Release
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
