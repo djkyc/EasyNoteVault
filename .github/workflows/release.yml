@@ -1,10 +1,7 @@
-name: Build EasyNoteVault (Windows)
+name: Build EasyNoteVault (Manual Only)
 
 on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
+  workflow_dispatch:   # ⭐ 只允许手动运行
 
 jobs:
   build:
@@ -21,22 +18,22 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      # 3️⃣ 清理工作区（关键，防止重复定义）
+      # 3️⃣ 强制清理（解决重复定义 / 幽灵文件问题）
       - name: Clean workspace
         shell: pwsh
         run: |
-          Write-Host "== Clean build artifacts =="
+          Write-Host "== Cleaning workspace =="
           dotnet clean windows/EasyNoteVault/EasyNoteVault.csproj
           Remove-Item -Recurse -Force windows/EasyNoteVault/bin -ErrorAction SilentlyContinue
           Remove-Item -Recurse -Force windows/EasyNoteVault/obj -ErrorAction SilentlyContinue
 
-      # 4️⃣ 构建
+      # 4️⃣ Build
       - name: Build
         shell: pwsh
         run: |
           dotnet build windows/EasyNoteVault/EasyNoteVault.csproj -c Release
 
-      # 5️⃣ 发布（单文件 exe）
+      # 5️⃣ Publish（单文件 exe）
       - name: Publish
         shell: pwsh
         run: |
