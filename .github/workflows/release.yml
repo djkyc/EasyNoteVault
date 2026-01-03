@@ -1,86 +1,55 @@
-name: Manual Release (Windows)
+name: Build EasyNoteVault (Windows)
 
 on:
   workflow_dispatch:
-    inputs:
-      release_version:
-        description: "Release version (e.g. v1.0.0)"
-        required: true
-
-# 🔑 关键：允许写仓库（解决 403）
-permissions:
-  contents: write
+  push:
+    branches:
+      - main
 
 jobs:
-  release:
+  build:
     runs-on: windows-latest
 
-    # 把 secrets 映射成 env，供 if 判断使用
-    env:
-      SIGN_CERT: ${{ secrets.SIGN_CERT }}
-      SIGN_PASSWORD: ${{ secrets.SIGN_PASSWORD }}
-
     steps:
-      # 1️⃣ Checkout（带 token）
+      # 1️⃣ 拉取代码
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0   # 必须，tag push 需要完整历史
 
-      # 2️⃣ Setup .NET
+      # 2️⃣ 安装 .NET
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
 
-      # 3️⃣ Build
+      # 3️⃣ 清理工作区（关键，防止重复定义）
+      - name: Clean workspace
+        shell: pwsh
+        run: |
+          Write-Host "== Clean build artifacts =="
+          dotnet clean windows/EasyNoteVault/EasyNoteVault.csproj
+          Remove-Item -Recurse -Force windows/EasyNoteVault/bin -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force windows/EasyNoteVault/obj -ErrorAction SilentlyContinue
+
+      # 4️⃣ 构建
       - name: Build
         shell: pwsh
-        run: windows/scripts/build.ps1
+        run: |
+          dotnet build windows/EasyNoteVault/EasyNoteVault.csproj -c Release
 
-      # 4️⃣ Publish
+      # 5️⃣ 发布（单文件 exe）
       - name: Publish
         shell: pwsh
-        run: windows/scripts/publish.ps1
-
-      # 5️⃣ Decode signing cert（可选）
-      - name: Decode signing certificate
-        if: env.SIGN_CERT != ''
-        shell: pwsh
         run: |
-          $bytes = [System.Convert]::FromBase64String($env:SIGN_CERT)
-          [System.IO.File]::WriteAllBytes("cert.pfx", $bytes)
+          dotnet publish windows/EasyNoteVault/EasyNoteVault.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -o dist
 
-      # 6️⃣ Sign exe（自动找 signtool，找不到就跳过）
-      - name: Sign executable
-        if: env.SIGN_CERT != ''
-        shell: pwsh
-        run: |
-          windows/scripts/sign.ps1 `
-            -ExePath artifacts/windows/EasyNoteVault.exe `
-            -CertPath cert.pfx `
-            -CertPassword $env:SIGN_PASSWORD
-
-      # 7️⃣ Prepare release files
-      - name: Prepare release files
-        shell: pwsh
-        run: windows/scripts/release.ps1
-
-      # 8️⃣ Create git tag（现在不会 403 了）
-      - name: Create git tag
-        shell: pwsh
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git tag ${{ inputs.release_version }}
-          git push origin ${{ inputs.release_version }}
-
-      # 9️⃣ Create GitHub Release
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      # 6️⃣ 上传构建产物
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ inputs.release_version }}
-          files: dist/windows/**/*.zip
-          overwrite_files: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: EasyNoteVault
+          path: dist
