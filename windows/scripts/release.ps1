@@ -3,15 +3,21 @@ $ErrorActionPreference = "Stop"
 Write-Host "== Release Prepare =="
 
 $version = $env:GITHUB_REF_NAME
-if (-not $version) {
-    $version = "dev"
-}
+if (-not $version) { throw "No version tag found." }
 
 $src  = "artifacts/windows"
-$dist = "dist/windows/$version"
+$dist = "dist/windows"
 
 New-Item -ItemType Directory -Force -Path $dist | Out-Null
-Copy-Item "$src\*" $dist -Recurse -Force
 
-Write-Host "Release version: $version"
-Write-Host "Files copied to: $dist"
+$zipName = "EasyNoteVault-$version-windows.zip"
+$zipPath = Join-Path $dist $zipName
+
+if (Test-Path $zipPath) {
+    Remove-Item $zipPath -Force
+}
+
+Compress-Archive -Path "$src\*" -DestinationPath $zipPath
+
+Write-Host "Release package created:"
+Write-Host $zipPath
