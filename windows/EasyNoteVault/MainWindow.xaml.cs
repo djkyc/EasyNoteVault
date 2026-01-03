@@ -14,9 +14,10 @@ namespace EasyNoteVault
         {
             InitializeComponent();
 
+            // 绑定数据源
             VaultGrid.ItemsSource = Items;
 
-            // 示例数据（可删）
+            // 示例数据（你可以随时删除）
             Items.Add(new VaultItem
             {
                 Name = "示例",
@@ -33,9 +34,9 @@ namespace EasyNoteVault
             VaultGrid.CellEditEnding += VaultGrid_CellEditEnding;
         }
 
-        // =============================
-        // 单击复制（网站 / 账号 / 密码）
-        // =============================
+        // ==================================================
+        // 单击复制（网站 / 账号 / 密码）+ 提示
+        // ==================================================
         private void VaultGrid_PreviewMouseLeftButtonUp(
             object sender,
             MouseButtonEventArgs e)
@@ -44,17 +45,23 @@ namespace EasyNoteVault
                 !string.IsNullOrWhiteSpace(tb.Text))
             {
                 Clipboard.SetText(tb.Text);
+
+                MessageBox.Show(
+                    "已复制",
+                    "EasyNoteVault",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
             }
         }
 
-        // =============================
+        // ==================================================
         // 编辑完成：检测网址重复
-        // =============================
+        // ==================================================
         private void VaultGrid_CellEditEnding(
             object? sender,
             DataGridCellEditEndingEventArgs e)
         {
-            // 只检测“网站”列
+            // 只检测“网站”这一列
             if (e.Column.Header?.ToString() != "网站")
                 return;
 
@@ -86,15 +93,16 @@ namespace EasyNoteVault
             }
         }
 
-        // =============================
-        // 网址标准化
-        // =============================
+        // ==================================================
+        // 网址标准化（用于重复判断）
+        // ==================================================
         private static string NormalizeUrl(string? url)
         {
             if (string.IsNullOrWhiteSpace(url))
                 return "";
 
             url = url.Trim().ToLower();
+
             if (url.EndsWith("/"))
                 url = url.TrimEnd('/');
 
@@ -102,9 +110,9 @@ namespace EasyNoteVault
         }
     }
 
-    // =============================
-    // 数据模型（纯 UI）
-    // =============================
+    // ==================================================
+    // 数据模型（纯 UI，不含逻辑）
+    // ==================================================
     public class VaultItem
     {
         public string Name { get; set; } = "";
