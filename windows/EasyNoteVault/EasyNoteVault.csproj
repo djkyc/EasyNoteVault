@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- 基本配置 -->
+    <!-- 基本 -->
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
@@ -9,26 +9,23 @@
     <AssemblyName>EasyNoteVault</AssemblyName>
     <RootNamespace>EasyNoteVault</RootNamespace>
 
-    <!-- ===== 发布方式 ===== -->
+    <!-- 发布方式 -->
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
 
-    <!-- ===== 🔥 体积压缩关键配置（就是这些） ===== -->
+    <!-- ===== 体积控制（WPF 安全项）===== -->
 
-    <!-- 1️⃣ 启用裁剪（删除没用到的 .NET 代码） -->
-    <PublishTrimmed>true</PublishTrimmed>
+    <!-- ❗WPF 不允许 Trim，必须关闭 -->
+    <PublishTrimmed>false</PublishTrimmed>
 
-    <!-- 2️⃣ 使用 link 模式（最省体积） -->
-    <TrimMode>link</TrimMode>
-
-    <!-- 3️⃣ 关闭 ICU 全球化（再减 10~15MB） -->
+    <!-- 关闭 ICU（安全，仍可减体积） -->
     <InvariantGlobalization>true</InvariantGlobalization>
 
-    <!-- 4️⃣ 启用 ReadyToRun 压缩（可选，默认开） -->
+    <!-- ReadyToRun 可开 -->
     <PublishReadyToRun>true</PublishReadyToRun>
 
-    <!-- ===== 其它 ===== -->
+    <!-- 其它 -->
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
