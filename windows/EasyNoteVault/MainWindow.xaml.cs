@@ -1,67 +1,34 @@
+using Microsoft.Win32;
+using System;
 using System.Collections.ObjectModel;
-using System.ComponentModel;
+using System.IO;
 using System.Linq;
+using System.Text;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
 using System.Windows.Input;
 
 namespace EasyNoteVault
 {
     public partial class MainWindow : Window
     {
-        private ObservableCollection<VaultItem> Items =
+        public ObservableCollection<VaultItem> Items { get; } =
             new ObservableCollection<VaultItem>();
-
-        private ICollectionView View;
 
         public MainWindow()
         {
             InitializeComponent();
-
-            // 加载数据（延迟、安全）
-            foreach (var item in DataStore.Load())
-                Items.Add(item);
-
-            View = CollectionViewSource.GetDefaultView(Items);
-            VaultGrid.ItemsSource = View;
-
-            VaultGrid.PreviewMouseLeftButtonUp += VaultGrid_PreviewMouseLeftButtonUp;
-            VaultGrid.CellEditEnding += VaultGrid_CellEditEnding;
-
-            Closing += (_, _) => Save();
+            VaultGrid.ItemsSource = Items;
         }
 
-        // ================= 自动保存 =================
-        private void Save()
-        {
-            DataStore.Save(Items);
-        }
-
-        // ================= 新增 =================
+        // ================= 新增一行 =================
         private void AddRow_Click(object sender, RoutedEventArgs e)
         {
             var item = new VaultItem();
             Items.Add(item);
-            Save();
-        }
-
-        // ================= 搜索 =================
-        private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
-        {
-            var text = SearchBox.Text.Trim().ToLower();
-
-            View.Filter = obj =>
-            {
-                if (string.IsNullOrEmpty(text))
-                    return true;
-
-                var v = obj as VaultItem;
-                return v.Name.ToLower().Contains(text) ||
-                       v.Url.ToLower().Contains(text) ||
-                       v.Account.ToLower().Contains(text) ||
-                       v.Remark.ToLower().Contains(text);
-            };
+            VaultGrid.SelectedItem = item;
+            VaultGrid.ScrollIntoView(item);
         }
 
         // ================= 复制 =================
@@ -79,9 +46,9 @@ namespace EasyNoteVault
         // ================= 粘贴 =================
         private void PasteMenuItem_Click(object sender, RoutedEventArgs e)
         {
-            if (!Clipboard.ContainsText() ||
-                VaultGrid.CurrentCell.Item == null)
-                return;
+            if (!Clipboard.ContainsText()) return;
+            if (VaultGrid.CurrentCell.Item == null ||
+                VaultGrid.CurrentCell.Column == null) return;
 
             VaultGrid.BeginEdit();
 
@@ -97,14 +64,92 @@ namespace EasyNoteVault
 
             VaultGrid.CommitEdit(DataGridEditingUnit.Cell, true);
             VaultGrid.CommitEdit(DataGridEditingUnit.Row, true);
-
-            Save();
         }
 
-        // ================= 重复检测 =================
-        private void VaultGrid_CellEditEnding(object sender, DataGridCellEditEndingEventArgs e)
+        // ================= 导出 =================
+        private void Export_Click(object sender, RoutedEventArgs e)
         {
-            Save();
+            string fileName = DateTime.Now.ToString("yyyyMMddHH") + ".txt";
+
+            SaveFileDialog dlg = new SaveFileDialog
+            {
+                FileName = fileName,
+                Filter = "文本文件 (*.txt)|*.txt"
+            };
+
+            if (dlg.ShowDialog() != true) return;
+
+            var sb = new StringBuilder();
+            sb.AppendLine("名称  网站  账号  密码  备注");
+
+            foreach (var v in Items)
+            {
+                sb.AppendLine(
+                    $"{v.Name}  {v.Url}  {v.Account}  {v.Password}  {v.Remark}");
+            }
+
+            File.WriteAllText(dlg.FileName, sb.ToString(), Encoding.UTF8);
+        }
+
+        // ================= 导入（txt / json） =================
+        private void Import_Click(object sender, RoutedEventArgs e)
+        {
+            OpenFileDialog dlg = new OpenFileDialog
+            {
+                Filter = "文本文件 (*.txt)|*.txt|JSON 文件 (*.json)|*.json"
+            };
+
+            if (dlg.ShowDialog() != true) return;
+
+            var ext = Path.GetExtension(dlg.FileName).ToLower();
+
+            if (ext == ".txt")
+                ImportTxt(dlg.FileName);
+            else if (ext == ".json")
+                ImportJson(dlg.FileName);
+        }
+
+        private void ImportTxt(string path)
+        {
+            var lines = File.ReadAllLines(path, Encoding.UTF8);
+
+            foreach (var line in lines.Skip(1))
+            {
+                var parts = line
+                    .Split(new[] { "  " }, StringSplitOptions.RemoveEmptyEntries);
+
+                if (parts.Length < 5) continue;
+
+                Items.Add(new VaultItem
+                {
+                    Name = parts[0],
+                    Url = parts[1],
+                    Account = parts[2],
+                    Password = parts[3],
+                    Remark = parts[4]
+                });
+            }
+        }
+
+        private void ImportJson(string path)
+        {
+            try
+            {
+                var json = File.ReadAllText(path, Encoding.UTF8);
+                var list = JsonSerializer.Deserialize<VaultItem[]>(json);
+
+                if (list == null) return;
+
+                foreach (var v in list)
+                    Items.Add(v);
+            }
+            catch
+            {
+                MessageBox.Show("JSON 文件格式不正确",
+                    "导入失败",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
         }
     }
 
