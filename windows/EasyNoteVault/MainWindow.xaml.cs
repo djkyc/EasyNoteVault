@@ -13,11 +13,11 @@ namespace EasyNoteVault
 {
     public partial class MainWindow : Window
     {
-        // 真正的数据源（唯一可信）
+        // 真正的数据源
         private ObservableCollection<VaultItem> AllItems =
             new ObservableCollection<VaultItem>();
 
-        // 当前显示的数据（搜索结果）
+        // 当前显示数据
         private ObservableCollection<VaultItem> ViewItems =
             new ObservableCollection<VaultItem>();
 
@@ -29,6 +29,10 @@ namespace EasyNoteVault
 
             Loaded += (_, _) => LoadData();
             Closing += (_, _) => SaveData();
+
+            // 明确注册，防止再丢
+            VaultGrid.PreviewMouseLeftButtonUp += VaultGrid_PreviewMouseLeftButtonUp;
+            VaultGrid.CellEditEnding += VaultGrid_CellEditEnding;
         }
 
         // ================= 加载 / 保存 =================
@@ -61,7 +65,7 @@ namespace EasyNoteVault
             VaultGrid.ScrollIntoView(item);
         }
 
-        // ================= 搜索过滤 =================
+        // ================= 搜索 =================
         private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
         {
             RefreshView();
@@ -81,7 +85,7 @@ namespace EasyNoteVault
             }
         }
 
-        // ================= 右键粘贴（写 AllItems） =================
+        // ================= 右键粘贴 =================
         private void PasteMenuItem_Click(object sender, RoutedEventArgs e)
         {
             if (!Clipboard.ContainsText())
@@ -90,8 +94,8 @@ namespace EasyNoteVault
             if (VaultGrid.CurrentCell.Item is not VaultItem viewItem)
                 return;
 
-            var realItem = AllItems.FirstOrDefault(x => x == viewItem);
-            if (realItem == null)
+            var item = AllItems.FirstOrDefault(x => x == viewItem);
+            if (item == null)
                 return;
 
             string col = VaultGrid.CurrentCell.Column.Header.ToString();
@@ -99,19 +103,19 @@ namespace EasyNoteVault
 
             if (col == "网站")
             {
-                if (!TrySetUrl(realItem, text))
+                if (!TrySetUrl(item, text))
                     return;
             }
-            else if (col == "名称") realItem.Name = text;
-            else if (col == "账号") realItem.Account = text;
-            else if (col == "密码") realItem.Password = text;
-            else if (col == "备注") realItem.Remark = text;
+            else if (col == "名称") item.Name = text;
+            else if (col == "账号") item.Account = text;
+            else if (col == "密码") item.Password = text;
+            else if (col == "备注") item.Remark = text;
 
             RefreshView();
             SaveData();
         }
 
-        // ================= 编辑完成（网站校验） =================
+        // ================= 重复网址（禁止 + 定位） =================
         private void VaultGrid_CellEditEnding(object sender, DataGridCellEditEndingEventArgs e)
         {
             if (e.Column.Header.ToString() != "网站")
@@ -120,25 +124,26 @@ namespace EasyNoteVault
             if (e.Row.Item is not VaultItem viewItem)
                 return;
 
-            var realItem = AllItems.FirstOrDefault(x => x == viewItem);
-            if (realItem == null)
+            var item = AllItems.FirstOrDefault(x => x == viewItem);
+            if (item == null)
                 return;
 
             var tb = e.EditingElement as TextBox;
             if (tb == null)
                 return;
 
-            if (!TrySetUrl(realItem, tb.Text))
+            if (!TrySetUrl(item, tb.Text))
             {
                 e.Cancel = true;
-                return;
             }
-
-            RefreshView();
-            SaveData();
+            else
+            {
+                RefreshView();
+                SaveData();
+            }
         }
 
-        // ================= 导入 =================
+        // ================= 🔥 导入（XAML 需要） =================
         private void Import_Click(object sender, RoutedEventArgs e)
         {
             OpenFileDialog dlg = new OpenFileDialog
@@ -157,6 +162,33 @@ namespace EasyNoteVault
             SaveData();
         }
 
+        // ================= 🔥 导出（XAML 需要） =================
+        private void Export_Click(object sender, RoutedEventArgs e)
+        {
+            string fileName = DateTime.Now.ToString("yyyyMMddHH") + ".txt";
+
+            SaveFileDialog dlg = new SaveFileDialog
+            {
+                FileName = fileName,
+                Filter = "文本文件 (*.txt)|*.txt"
+            };
+
+            if (dlg.ShowDialog() != true)
+                return;
+
+            var sb = new StringBuilder();
+            sb.AppendLine("名称  网站  账号  密码  备注");
+
+            foreach (var v in AllItems)
+            {
+                sb.AppendLine(
+                    $"{v.Name}  {v.Url}  {v.Account}  {v.Password}  {v.Remark}");
+            }
+
+            File.WriteAllText(dlg.FileName, sb.ToString(), Encoding.UTF8);
+        }
+
+        // ================= 导入实现 =================
         private void ImportTxt(string path)
         {
             var lines = File.ReadAllLines(path, Encoding.UTF8);
@@ -194,15 +226,15 @@ namespace EasyNoteVault
             }
         }
 
-        // ================= 核心：统一网址校验 =================
+        // ================= 统一网址校验 =================
         private bool TrySetUrl(VaultItem current, string newUrl)
         {
-            string normalized = NormalizeUrl(newUrl);
-            if (string.IsNullOrEmpty(normalized))
+            string norm = NormalizeUrl(newUrl);
+            if (string.IsNullOrEmpty(norm))
                 return true;
 
             var dup = AllItems.FirstOrDefault(x =>
-                x != current && NormalizeUrl(x.Url) == normalized);
+                x != current && NormalizeUrl(x.Url) == norm);
 
             if (dup != null)
             {
@@ -225,7 +257,6 @@ namespace EasyNoteVault
         private void RefreshView()
         {
             string key = SearchBox.Text.Trim().ToLower();
-
             ViewItems.Clear();
 
             foreach (var v in AllItems)
