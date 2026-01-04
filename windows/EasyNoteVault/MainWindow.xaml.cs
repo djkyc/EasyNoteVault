@@ -13,11 +13,11 @@ namespace EasyNoteVault
 {
     public partial class MainWindow : Window
     {
-        // 全量数据（永远完整）
+        // 全量数据（真实数据）
         private ObservableCollection<VaultItem> AllItems =
             new ObservableCollection<VaultItem>();
 
-        // 当前显示数据（搜索结果）
+        // 当前显示数据（搜索过滤后）
         private ObservableCollection<VaultItem> ViewItems =
             new ObservableCollection<VaultItem>();
 
@@ -27,16 +27,14 @@ namespace EasyNoteVault
 
             VaultGrid.ItemsSource = ViewItems;
 
-            // 启动后加载（避免启动阶段崩）
             Loaded += (_, _) => LoadData();
-
-            // 退出即保存
             Closing += (_, _) => SaveData();
+
+            // 恢复：编辑完成检测重复
+            VaultGrid.CellEditEnding += VaultGrid_CellEditEnding;
         }
 
-        // =========================
-        // 加载（AES 解密 data.enc）
-        // =========================
+        // ================= 加载 / 保存 =================
         private void LoadData()
         {
             try
@@ -52,17 +50,10 @@ namespace EasyNoteVault
             }
             catch (Exception ex)
             {
-                MessageBox.Show(
-                    "数据加载失败：\n" + ex.Message,
-                    "EasyNoteVault",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
+                MessageBox.Show("数据加载失败：\n" + ex.Message);
             }
         }
 
-        // =========================
-        // 保存（AES 加密 data.enc）
-        // =========================
         private void SaveData()
         {
             try
@@ -71,17 +62,11 @@ namespace EasyNoteVault
             }
             catch (Exception ex)
             {
-                MessageBox.Show(
-                    "数据保存失败：\n" + ex.Message,
-                    "EasyNoteVault",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
+                MessageBox.Show("数据保存失败：\n" + ex.Message);
             }
         }
 
-        // =========================
-        // 新增一行
-        // =========================
+        // ================= 新增一行 =================
         private void AddRow_Click(object sender, RoutedEventArgs e)
         {
             var item = new VaultItem();
@@ -92,13 +77,10 @@ namespace EasyNoteVault
             VaultGrid.ScrollIntoView(item);
         }
 
-        // =========================
-        // 搜索 / 过滤（不使用 ICollectionView）
-        // =========================
+        // ================= 搜索过滤 =================
         private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
         {
             string key = SearchBox.Text.Trim().ToLower();
-
             ViewItems.Clear();
 
             foreach (var v in AllItems)
@@ -114,41 +96,28 @@ namespace EasyNoteVault
             }
         }
 
-        // =========================
-        // 左键单击复制 + 提示
-        // =========================
+        // ================= 左键复制 =================
         private void VaultGrid_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
             if (e.OriginalSource is TextBlock tb &&
                 !string.IsNullOrWhiteSpace(tb.Text))
             {
                 Clipboard.SetText(tb.Text);
-
-                MessageBox.Show(
-                    "已复制",
-                    "EasyNoteVault",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information);
+                MessageBox.Show("已复制");
             }
         }
 
-        // =========================
-        // 右键粘贴（真正写入单元格）
-        // =========================
+        // ================= 右键粘贴 =================
         private void PasteMenuItem_Click(object sender, RoutedEventArgs e)
         {
-            if (!Clipboard.ContainsText())
-                return;
-
+            if (!Clipboard.ContainsText()) return;
             if (VaultGrid.CurrentCell.Item == null ||
-                VaultGrid.CurrentCell.Column == null)
-                return;
+                VaultGrid.CurrentCell.Column == null) return;
 
             VaultGrid.BeginEdit();
 
             var item = VaultGrid.CurrentCell.Item as VaultItem;
-            if (item == null)
-                return;
+            if (item == null) return;
 
             string text = Clipboard.GetText();
             string col = VaultGrid.CurrentCell.Column.Header.ToString();
@@ -163,9 +132,36 @@ namespace EasyNoteVault
             VaultGrid.CommitEdit(DataGridEditingUnit.Row, true);
         }
 
-        // =========================
-        // 导出 txt（yyyyMMddHH.txt，双空格）
-        // =========================
+        // ================= 🔥 重复网站检测（恢复） =================
+        private void VaultGrid_CellEditEnding(object sender, DataGridCellEditEndingEventArgs e)
+        {
+            if (e.Column.Header.ToString() != "网站")
+                return;
+
+            var current = e.Row.Item as VaultItem;
+            if (current == null)
+                return;
+
+            string currentUrl = NormalizeUrl(current.Url);
+            if (string.IsNullOrEmpty(currentUrl))
+                return;
+
+            var duplicates = AllItems
+                .Where(x => x != current &&
+                            NormalizeUrl(x.Url) == currentUrl)
+                .ToList();
+
+            if (duplicates.Count > 0)
+            {
+                MessageBox.Show(
+                    $"网站重复：\n{current.Url}\n\n已存在 {duplicates.Count} 条记录",
+                    "重复提示",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+        }
+
+        // ================= 导出 =================
         private void Export_Click(object sender, RoutedEventArgs e)
         {
             string fileName = DateTime.Now.ToString("yyyyMMddHH") + ".txt";
@@ -176,8 +172,7 @@ namespace EasyNoteVault
                 Filter = "文本文件 (*.txt)|*.txt"
             };
 
-            if (dlg.ShowDialog() != true)
-                return;
+            if (dlg.ShowDialog() != true) return;
 
             var sb = new StringBuilder();
             sb.AppendLine("名称  网站  账号  密码  备注");
@@ -191,9 +186,7 @@ namespace EasyNoteVault
             File.WriteAllText(dlg.FileName, sb.ToString(), Encoding.UTF8);
         }
 
-        // =========================
-        // 导入（txt / json）
-        // =========================
+        // ================= 导入 =================
         private void Import_Click(object sender, RoutedEventArgs e)
         {
             OpenFileDialog dlg = new OpenFileDialog
@@ -201,15 +194,11 @@ namespace EasyNoteVault
                 Filter = "文本文件 (*.txt)|*.txt|JSON 文件 (*.json)|*.json"
             };
 
-            if (dlg.ShowDialog() != true)
-                return;
+            if (dlg.ShowDialog() != true) return;
 
             string ext = Path.GetExtension(dlg.FileName).ToLower();
-
-            if (ext == ".txt")
-                ImportTxt(dlg.FileName);
-            else if (ext == ".json")
-                ImportJson(dlg.FileName);
+            if (ext == ".txt") ImportTxt(dlg.FileName);
+            else if (ext == ".json") ImportJson(dlg.FileName);
         }
 
         private void ImportTxt(string path)
@@ -218,11 +207,8 @@ namespace EasyNoteVault
 
             foreach (var line in lines.Skip(1))
             {
-                var parts = line
-                    .Split(new[] { "  " }, StringSplitOptions.RemoveEmptyEntries);
-
-                if (parts.Length < 5)
-                    continue;
+                var parts = line.Split(new[] { "  " }, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length < 5) continue;
 
                 var v = new VaultItem
                 {
@@ -244,9 +230,7 @@ namespace EasyNoteVault
             {
                 var json = File.ReadAllText(path, Encoding.UTF8);
                 var list = JsonSerializer.Deserialize<VaultItem[]>(json);
-
-                if (list == null)
-                    return;
+                if (list == null) return;
 
                 foreach (var v in list)
                 {
@@ -256,18 +240,24 @@ namespace EasyNoteVault
             }
             catch
             {
-                MessageBox.Show(
-                    "JSON 文件格式不正确",
-                    "导入失败",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
+                MessageBox.Show("JSON 文件格式不正确");
             }
+        }
+
+        // ================= 工具 =================
+        private static string NormalizeUrl(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url))
+                return "";
+
+            url = url.Trim().ToLower();
+            if (url.EndsWith("/"))
+                url = url.TrimEnd('/');
+
+            return url;
         }
     }
 
-    // =========================
-    // 数据模型
-    // =========================
     public class VaultItem
     {
         public string Name { get; set; } = "";
