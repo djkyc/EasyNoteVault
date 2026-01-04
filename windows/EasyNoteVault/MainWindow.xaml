@@ -13,18 +13,22 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- 顶部 -->
-        <DockPanel Margin="0,0,0,10"
+        <!-- 顶部区域 -->
+        <DockPanel Grid.Row="0"
+                   Margin="0,0,0,10"
                    LastChildFill="False">
 
+            <!-- 左侧标题 -->
             <TextBlock Text="EasyNoteVault"
                        FontSize="22"
                        FontWeight="Bold"
                        DockPanel.Dock="Left"/>
 
+            <!-- 右侧操作区 -->
             <StackPanel Orientation="Horizontal"
                         DockPanel.Dock="Right">
 
+                <!-- 搜索框 -->
                 <TextBox x:Name="SearchBox"
                          Width="250"
                          Height="28"
@@ -33,18 +37,20 @@
                          TextChanged="SearchBox_TextChanged"
                          ToolTip="搜索（名称 / 网站 / 账号 / 备注）"/>
 
+                <!-- 导入 -->
                 <Button Content="导入"
                         Width="80"
                         Margin="0,0,5,0"
                         Click="Import_Click"/>
 
+                <!-- 导出 -->
                 <Button Content="导出"
                         Width="80"
                         Click="Export_Click"/>
             </StackPanel>
         </DockPanel>
 
-        <!-- 表格 -->
+        <!-- 主表格 -->
         <DataGrid x:Name="VaultGrid"
                   Grid.Row="1"
                   AutoGenerateColumns="False"
@@ -55,6 +61,7 @@
                   PreviewMouseLeftButtonUp="VaultGrid_PreviewMouseLeftButtonUp"
                   CellEditEnding="VaultGrid_CellEditEnding">
 
+            <!-- 右键菜单 -->
             <DataGrid.ContextMenu>
                 <ContextMenu>
                     <MenuItem Header="粘贴"
@@ -62,12 +69,27 @@
                 </ContextMenu>
             </DataGrid.ContextMenu>
 
+            <!-- 列定义 -->
             <DataGrid.Columns>
-                <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="150"/>
-                <DataGridTextColumn Header="网站" Binding="{Binding Url}" Width="250"/>
-                <DataGridTextColumn Header="账号" Binding="{Binding Account}" Width="200"/>
-                <DataGridTextColumn Header="密码" Binding="{Binding Password}" Width="200"/>
-                <DataGridTextColumn Header="备注" Binding="{Binding Remark}" Width="*"/>
+                <DataGridTextColumn Header="名称"
+                                    Binding="{Binding Name}"
+                                    Width="150"/>
+
+                <DataGridTextColumn Header="网站"
+                                    Binding="{Binding Url}"
+                                    Width="250"/>
+
+                <DataGridTextColumn Header="账号"
+                                    Binding="{Binding Account}"
+                                    Width="200"/>
+
+                <DataGridTextColumn Header="密码"
+                                    Binding="{Binding Password}"
+                                    Width="200"/>
+
+                <DataGridTextColumn Header="备注"
+                                    Binding="{Binding Remark}"
+                                    Width="*"/>
             </DataGrid.Columns>
         </DataGrid>
 
