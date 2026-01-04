@@ -13,11 +13,11 @@ namespace EasyNoteVault
 {
     public partial class MainWindow : Window
     {
-        // 全量数据（唯一真实数据源）
+        // 真正的数据源（唯一可信）
         private ObservableCollection<VaultItem> AllItems =
             new ObservableCollection<VaultItem>();
 
-        // 当前显示数据（搜索结果）
+        // 当前显示的数据（搜索结果）
         private ObservableCollection<VaultItem> ViewItems =
             new ObservableCollection<VaultItem>();
 
@@ -54,29 +54,17 @@ namespace EasyNoteVault
         {
             var item = new VaultItem();
             AllItems.Add(item);
-            ViewItems.Add(item);
+            RefreshView();
+            SaveData();
 
             VaultGrid.SelectedItem = item;
             VaultGrid.ScrollIntoView(item);
         }
 
-        // ================= 搜索 =================
+        // ================= 搜索过滤 =================
         private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
         {
-            string key = SearchBox.Text.Trim().ToLower();
-            ViewItems.Clear();
-
-            foreach (var v in AllItems)
-            {
-                if (string.IsNullOrEmpty(key) ||
-                    v.Name.ToLower().Contains(key) ||
-                    v.Url.ToLower().Contains(key) ||
-                    v.Account.ToLower().Contains(key) ||
-                    v.Remark.ToLower().Contains(key))
-                {
-                    ViewItems.Add(v);
-                }
-            }
+            RefreshView();
         }
 
         // ================= 左键复制 =================
@@ -93,61 +81,61 @@ namespace EasyNoteVault
             }
         }
 
-        // ================= 右键粘贴 =================
+        // ================= 右键粘贴（写 AllItems） =================
         private void PasteMenuItem_Click(object sender, RoutedEventArgs e)
         {
             if (!Clipboard.ContainsText())
                 return;
 
-            if (VaultGrid.CurrentCell.Item is not VaultItem item)
+            if (VaultGrid.CurrentCell.Item is not VaultItem viewItem)
+                return;
+
+            var realItem = AllItems.FirstOrDefault(x => x == viewItem);
+            if (realItem == null)
                 return;
 
             string col = VaultGrid.CurrentCell.Column.Header.ToString();
             string text = Clipboard.GetText();
 
-            if (col == "名称") item.Name = text;
-            else if (col == "网站") item.Url = text;
-            else if (col == "账号") item.Account = text;
-            else if (col == "密码") item.Password = text;
-            else if (col == "备注") item.Remark = text;
+            if (col == "网站")
+            {
+                if (!TrySetUrl(realItem, text))
+                    return;
+            }
+            else if (col == "名称") realItem.Name = text;
+            else if (col == "账号") realItem.Account = text;
+            else if (col == "密码") realItem.Password = text;
+            else if (col == "备注") realItem.Remark = text;
+
+            RefreshView();
+            SaveData();
         }
 
-        // ================= 重复网址校验 =================
+        // ================= 编辑完成（网站校验） =================
         private void VaultGrid_CellEditEnding(object sender, DataGridCellEditEndingEventArgs e)
         {
             if (e.Column.Header.ToString() != "网站")
                 return;
 
-            if (e.Row.Item is not VaultItem current)
+            if (e.Row.Item is not VaultItem viewItem)
                 return;
 
-            string normalized = NormalizeUrl(current.Url);
-            if (string.IsNullOrEmpty(normalized))
+            var realItem = AllItems.FirstOrDefault(x => x == viewItem);
+            if (realItem == null)
                 return;
 
-            var duplicate = AllItems
-                .FirstOrDefault(x => x != current &&
-                                     NormalizeUrl(x.Url) == normalized);
+            var tb = e.EditingElement as TextBox;
+            if (tb == null)
+                return;
 
-            if (duplicate != null)
+            if (!TrySetUrl(realItem, tb.Text))
             {
-                current.Url = "";
-
-                MessageBox.Show(
-                    $"该网站已存在，不能重复添加：\n{duplicate.Url}",
-                    "重复网址",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
-
-                VaultGrid.SelectedItem = duplicate;
-                VaultGrid.ScrollIntoView(duplicate);
-
-                Dispatcher.BeginInvoke(new Action(() =>
-                {
-                    VaultGrid.CancelEdit(DataGridEditingUnit.Cell);
-                    VaultGrid.CancelEdit(DataGridEditingUnit.Row);
-                }));
+                e.Cancel = true;
+                return;
             }
+
+            RefreshView();
+            SaveData();
         }
 
         // ================= 导入 =================
@@ -164,6 +152,9 @@ namespace EasyNoteVault
             string ext = Path.GetExtension(dlg.FileName).ToLower();
             if (ext == ".txt") ImportTxt(dlg.FileName);
             else if (ext == ".json") ImportJson(dlg.FileName);
+
+            RefreshView();
+            SaveData();
         }
 
         private void ImportTxt(string path)
@@ -176,17 +167,16 @@ namespace EasyNoteVault
                 if (parts.Length < 5)
                     continue;
 
-                var v = new VaultItem
+                var item = new VaultItem
                 {
                     Name = parts[0],
-                    Url = parts[1],
                     Account = parts[2],
                     Password = parts[3],
                     Remark = parts[4]
                 };
 
-                AllItems.Add(v);
-                ViewItems.Add(v);
+                if (TrySetUrl(item, parts[1]))
+                    AllItems.Add(item);
             }
         }
 
@@ -197,37 +187,58 @@ namespace EasyNoteVault
             if (list == null)
                 return;
 
-            foreach (var v in list)
+            foreach (var item in list)
             {
-                AllItems.Add(v);
-                ViewItems.Add(v);
+                if (TrySetUrl(item, item.Url))
+                    AllItems.Add(item);
             }
         }
 
-        // ================= 导出 =================
-        private void Export_Click(object sender, RoutedEventArgs e)
+        // ================= 核心：统一网址校验 =================
+        private bool TrySetUrl(VaultItem current, string newUrl)
         {
-            string fileName = DateTime.Now.ToString("yyyyMMddHH") + ".txt";
+            string normalized = NormalizeUrl(newUrl);
+            if (string.IsNullOrEmpty(normalized))
+                return true;
 
-            SaveFileDialog dlg = new SaveFileDialog
+            var dup = AllItems.FirstOrDefault(x =>
+                x != current && NormalizeUrl(x.Url) == normalized);
+
+            if (dup != null)
             {
-                FileName = fileName,
-                Filter = "文本文件 (*.txt)|*.txt"
-            };
+                MessageBox.Show(
+                    $"该网站已存在，不能重复添加：\n{dup.Url}",
+                    "重复网址",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
 
-            if (dlg.ShowDialog() != true)
-                return;
+                VaultGrid.SelectedItem = dup;
+                VaultGrid.ScrollIntoView(dup);
+                return false;
+            }
 
-            var sb = new StringBuilder();
-            sb.AppendLine("名称  网站  账号  密码  备注");
+            current.Url = newUrl;
+            return true;
+        }
+
+        // ================= 刷新视图 =================
+        private void RefreshView()
+        {
+            string key = SearchBox.Text.Trim().ToLower();
+
+            ViewItems.Clear();
 
             foreach (var v in AllItems)
             {
-                sb.AppendLine(
-                    $"{v.Name}  {v.Url}  {v.Account}  {v.Password}  {v.Remark}");
+                if (string.IsNullOrEmpty(key) ||
+                    v.Name.ToLower().Contains(key) ||
+                    v.Url.ToLower().Contains(key) ||
+                    v.Account.ToLower().Contains(key) ||
+                    v.Remark.ToLower().Contains(key))
+                {
+                    ViewItems.Add(v);
+                }
             }
-
-            File.WriteAllText(dlg.FileName, sb.ToString(), Encoding.UTF8);
         }
 
         private static string NormalizeUrl(string url)
