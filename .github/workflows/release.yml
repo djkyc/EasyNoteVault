@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version (例如 v0.1)"
+        description: "Release version (例如 v0.5.2)"
         required: true
 
 # 允许 Actions 创建 Release
@@ -26,13 +26,13 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      # 3️⃣ Build（你已有的脚本）
+      # 3️⃣ Build
       - name: Build
         shell: pwsh
         run: |
           windows/scripts/build.ps1
 
-      # 4️⃣ Publish（关键：把版本号写进程序集）
+      # 4️⃣ Publish（把版本号写进程序集）
       - name: Publish
         shell: pwsh
         run: |
@@ -41,24 +41,21 @@ jobs:
             -r win-x64 `
             --self-contained true `
             /p:PublishSingleFile=true `
-            /p:AssemblyInformationalVersion=${{ inputs.version }} `
-            -o dist/windows
+            /p:AssemblyInformationalVersion=${{ inputs.version }}
 
-      # 5️⃣ 打包发布文件（zip）
-      - name: Prepare release files
+      # 5️⃣ Release 打包（完全交给你已有的脚本）
+      - name: Prepare release package
         shell: pwsh
         run: |
-          if (Test-Path dist) { Remove-Item dist -Recurse -Force }
-          New-Item -ItemType Directory -Path dist | Out-Null
-          Compress-Archive -Path dist/windows/* -DestinationPath dist/EasyNoteVault-${{ inputs.version }}-windows.zip
+          windows/scripts/release.ps1
 
-      # 6️⃣ 创建 GitHub Release
+      # 6️⃣ 创建 GitHub Release（上传脚本生成的 zip）
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.version }}
           name: ${{ inputs.version }}
           files: |
-            dist/EasyNoteVault-${{ inputs.version }}-windows.zip
+            dist/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
