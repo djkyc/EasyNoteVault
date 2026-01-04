@@ -28,26 +28,12 @@ namespace EasyNoteVault
             Loaded += (_, _) => LoadData();
             Closing += (_, _) => { ForceCommitGridEdits(); SaveData(); };
 
-            VaultGrid.PreviewMouseLeftButtonUp += VaultGrid_PreviewMouseLeftButtonUp;
-            VaultGrid.CellEditEnding += VaultGrid_CellEditEnding;
+            // 事件：XAML 里也绑了，这里不重复绑（避免重复触发）
+            // VaultGrid.PreviewMouseLeftButtonUp += VaultGrid_PreviewMouseLeftButtonUp;
+            // VaultGrid.CellEditEnding += VaultGrid_CellEditEnding;
         }
 
-        // ================= 加载 / 保存 =================
-        private void LoadData()
-        {
-            AllItems.Clear();
-            ViewItems.Clear();
-            foreach (var v in DataStore.Load())
-                AllItems.Add(v);
-            RefreshView();
-        }
-
-        private void SaveData()
-        {
-            ForceCommitGridEdits();
-            DataStore.Save(AllItems);
-        }
-
+        // ================= 工具：强制提交 DataGrid 编辑 =================
         private void ForceCommitGridEdits()
         {
             try
@@ -56,6 +42,24 @@ namespace EasyNoteVault
                 VaultGrid.CommitEdit(DataGridEditingUnit.Row, true);
             }
             catch { }
+        }
+
+        // ================= 加载 / 保存 =================
+        private void LoadData()
+        {
+            AllItems.Clear();
+            ViewItems.Clear();
+
+            foreach (var v in DataStore.Load())
+                AllItems.Add(v);
+
+            RefreshView();
+        }
+
+        private void SaveData()
+        {
+            ForceCommitGridEdits();
+            DataStore.Save(AllItems);
         }
 
         // ================= 搜索 =================
@@ -75,7 +79,8 @@ namespace EasyNoteVault
             }
         }
 
-        // ================= ✅ 右键菜单打开前：安全定位到你点的单元格（不会崩） =================
+        // ================= ✅ 右键菜单打开前：定位到你点的“单元格” =================
+        // 关键：SelectionUnit=Cell 时，不能 SelectedItem（选行），否则会抛你截图的异常。
         private void VaultGrid_ContextMenuOpening(object sender, ContextMenuEventArgs e)
         {
             try
@@ -86,17 +91,24 @@ namespace EasyNoteVault
                 var cell = FindVisualParent<DataGridCell>(dep);
                 var row = FindVisualParent<DataGridRow>(dep);
 
-                // 点在表头/空白/滚动条：cell 或 row 可能为 null，直接放过，不做事
+                // 点在表头/空白区域/滚动条：没有 cell/row，直接放过
                 if (cell == null || row == null) return;
 
-                VaultGrid.SelectedItem = row.Item;
-                VaultGrid.CurrentCell = new DataGridCellInfo(row.Item, cell.Column);
-                VaultGrid.Focus();
+                SetCurrentCellOnly(row.Item, cell.Column);
             }
             catch
             {
-                // ✅ 关键：任何异常都吞掉，避免右键直接把程序干掉
+                // 永不崩
             }
+        }
+
+        private void SetCurrentCellOnly(object rowItem, DataGridColumn column)
+        {
+            VaultGrid.CurrentCell = new DataGridCellInfo(rowItem, column);
+            VaultGrid.SelectedCells.Clear();
+            VaultGrid.SelectedCells.Add(VaultGrid.CurrentCell);
+            VaultGrid.ScrollIntoView(rowItem, column);
+            VaultGrid.Focus();
         }
 
         private static T? FindVisualParent<T>(DependencyObject child) where T : DependencyObject
@@ -113,20 +125,22 @@ namespace EasyNoteVault
         // ================= ✅ 右键粘贴 =================
         private void PasteMenuItem_Click(object sender, RoutedEventArgs e)
         {
+            if (!Clipboard.ContainsText())
+                return;
+
             try
             {
-                if (!Clipboard.ContainsText()) return;
-
                 VaultGrid.Focus();
                 ForceCommitGridEdits();
 
                 var colObj = VaultGrid.CurrentCell.Column;
-                if (colObj == null) return;
+                if (colObj == null)
+                    return;
 
                 string col = colObj.Header?.ToString() ?? "";
                 string text = Clipboard.GetText();
 
-                // 当前行对象：可能是 VaultItem，也可能是 NewItemPlaceholder（新增占位）
+                // 当前行：可能是 VaultItem，也可能是新增占位符（NewItemPlaceholder）
                 VaultItem item;
                 if (VaultGrid.CurrentCell.Item is VaultItem vi)
                 {
@@ -134,23 +148,23 @@ namespace EasyNoteVault
                 }
                 else
                 {
-                    // ✅ 点在空表/占位行：自动新建一条再粘贴
+                    // ✅ 点在空表/占位行：自动新建一条
                     item = new VaultItem();
                     AllItems.Add(item);
 
+                    // 搜索中粘贴：先清空搜索，保证新行可见
                     if (!string.IsNullOrWhiteSpace(SearchBox.Text))
                         SearchBox.Text = "";
 
                     RefreshView();
-                    VaultGrid.SelectedItem = item;
-                    VaultGrid.ScrollIntoView(item);
-                    VaultGrid.CurrentCell = new DataGridCellInfo(item, colObj);
+                    SetCurrentCellOnly(item, colObj);
                 }
 
+                // 写入
                 if (col == "网站")
                 {
                     if (!TrySetUrl(item, text))
-                        return; // 重复：提示+定位已在 TrySetUrl 做了
+                        return; // 重复时已提示+定位
                 }
                 else if (col == "名称") item.Name = text;
                 else if (col == "账号") item.Account = text;
@@ -163,27 +177,28 @@ namespace EasyNoteVault
             }
             catch (Exception ex)
             {
-                // ✅ 给你一个明确错误，不再“直接退出没提示”
                 MessageBox.Show($"粘贴出错：\n{ex.Message}", "EasyNoteVault",
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
-        // ================= 编辑结束：网址重复校验 + 保存 =================
+        // ================= 编辑结束：网站列重复校验 + 自动保存 =================
         private void VaultGrid_CellEditEnding(object sender, DataGridCellEditEndingEventArgs e)
         {
-            if (e.Row.Item is not VaultItem item) return;
+            if (e.Row.Item is not VaultItem item)
+                return;
 
             string col = e.Column.Header?.ToString() ?? "";
+
             if (col == "网站")
             {
-                var tb = e.EditingElement as TextBox;
-                if (tb == null) return;
-
-                if (!TrySetUrl(item, tb.Text))
+                if (e.EditingElement is TextBox tb)
                 {
-                    e.Cancel = true;
-                    return;
+                    if (!TrySetUrl(item, tb.Text))
+                    {
+                        e.Cancel = true;
+                        return;
+                    }
                 }
             }
 
@@ -195,55 +210,6 @@ namespace EasyNoteVault
             }), DispatcherPriority.Background);
         }
 
-        // ================= 网址去重：重复 -> 提示 + 定位 + 拒绝 =================
-        private DataGridColumn? GetColumnByHeader(string header)
-        {
-            return VaultGrid.Columns.FirstOrDefault(c =>
-                string.Equals(c.Header?.ToString(), header, StringComparison.Ordinal));
-        }
-
-        private void LocateItemAndFocusCell(VaultItem item, string columnHeader)
-        {
-            if (!ViewItems.Contains(item))
-            {
-                SearchBox.Text = "";
-                RefreshView();
-            }
-
-            VaultGrid.SelectedItem = item;
-            VaultGrid.ScrollIntoView(item);
-
-            var col = GetColumnByHeader(columnHeader);
-            if (col != null)
-            {
-                VaultGrid.CurrentCell = new DataGridCellInfo(item, col);
-                VaultGrid.Focus();
-            }
-        }
-
-        private bool TrySetUrl(VaultItem current, string newUrl)
-        {
-            string norm = NormalizeUrl(newUrl);
-            if (string.IsNullOrEmpty(norm))
-            {
-                current.Url = newUrl ?? "";
-                return true;
-            }
-
-            var dup = AllItems.FirstOrDefault(x => x != current && NormalizeUrl(x.Url) == norm);
-            if (dup != null)
-            {
-                MessageBox.Show($"该网站已存在，不能重复添加：\n{dup.Url}",
-                    "重复网址", MessageBoxButton.OK, MessageBoxImage.Warning);
-
-                LocateItemAndFocusCell(dup, "网站");
-                return false;
-            }
-
-            current.Url = newUrl ?? "";
-            return true;
-        }
-
         // ================= 导入 / 导出 =================
         private void Import_Click(object sender, RoutedEventArgs e)
         {
@@ -252,7 +218,8 @@ namespace EasyNoteVault
                 Filter = "文本文件 (*.txt)|*.txt|JSON 文件 (*.json)|*.json"
             };
 
-            if (dlg.ShowDialog() != true) return;
+            if (dlg.ShowDialog() != true)
+                return;
 
             string ext = Path.GetExtension(dlg.FileName).ToLower();
             if (ext == ".txt") ImportTxt(dlg.FileName);
@@ -273,12 +240,16 @@ namespace EasyNoteVault
                 Filter = "文本文件 (*.txt)|*.txt"
             };
 
-            if (dlg.ShowDialog() != true) return;
+            if (dlg.ShowDialog() != true)
+                return;
 
             var sb = new StringBuilder();
             sb.AppendLine("名称  网站  账号  密码  备注");
+
             foreach (var v in AllItems)
+            {
                 sb.AppendLine($"{v.Name}  {v.Url}  {v.Account}  {v.Password}  {v.Remark}");
+            }
 
             File.WriteAllText(dlg.FileName, sb.ToString(), Encoding.UTF8);
         }
@@ -286,10 +257,12 @@ namespace EasyNoteVault
         private void ImportTxt(string path)
         {
             var lines = File.ReadAllLines(path, Encoding.UTF8);
+
             foreach (var line in lines.Skip(1))
             {
                 var parts = line.Split(new[] { "  " }, StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length < 5) continue;
+                if (parts.Length < 5)
+                    continue;
 
                 var item = new VaultItem
                 {
@@ -308,13 +281,63 @@ namespace EasyNoteVault
         {
             var json = File.ReadAllText(path, Encoding.UTF8);
             var list = JsonSerializer.Deserialize<VaultItem[]>(json);
-            if (list == null) return;
+            if (list == null)
+                return;
 
             foreach (var item in list)
             {
                 if (TrySetUrl(item, item.Url))
                     AllItems.Add(item);
             }
+        }
+
+        // ================= 重复网址：提示 + 拒绝 + 定位到已有项的网站单元格 =================
+        private DataGridColumn? GetColumnByHeader(string header)
+        {
+            return VaultGrid.Columns.FirstOrDefault(c =>
+                string.Equals(c.Header?.ToString(), header, StringComparison.Ordinal));
+        }
+
+        private void LocateItemAndFocusCell(VaultItem item, string columnHeader)
+        {
+            if (!ViewItems.Contains(item))
+            {
+                SearchBox.Text = "";
+                RefreshView();
+            }
+
+            var col = GetColumnByHeader(columnHeader);
+            if (col == null) return;
+
+            SetCurrentCellOnly(item, col);
+        }
+
+        private bool TrySetUrl(VaultItem current, string newUrl)
+        {
+            string norm = NormalizeUrl(newUrl);
+            if (string.IsNullOrEmpty(norm))
+            {
+                current.Url = newUrl ?? "";
+                return true;
+            }
+
+            var dup = AllItems.FirstOrDefault(x =>
+                x != current && NormalizeUrl(x.Url) == norm);
+
+            if (dup != null)
+            {
+                MessageBox.Show(
+                    $"该网站已存在，不能重复添加：\n{dup.Url}",
+                    "重复网址",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+
+                LocateItemAndFocusCell(dup, "网站");
+                return false;
+            }
+
+            current.Url = newUrl ?? "";
+            return true;
         }
 
         // ================= 刷新视图 =================
@@ -338,9 +361,13 @@ namespace EasyNoteVault
 
         private static string NormalizeUrl(string url)
         {
-            if (string.IsNullOrWhiteSpace(url)) return "";
+            if (string.IsNullOrWhiteSpace(url))
+                return "";
+
             url = url.Trim().ToLower();
-            if (url.EndsWith("/")) url = url.TrimEnd('/');
+            if (url.EndsWith("/"))
+                url = url.TrimEnd('/');
+
             return url;
         }
     }
