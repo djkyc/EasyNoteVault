@@ -57,9 +57,9 @@
                   CanUserDeleteRows="True"
                   IsReadOnly="False"
                   SelectionUnit="Cell"
+                  ContextMenuOpening="VaultGrid_ContextMenuOpening"
                   PreviewMouseLeftButtonUp="VaultGrid_PreviewMouseLeftButtonUp"
-                  CellEditEnding="VaultGrid_CellEditEnding"
-                  ContextMenuOpening="VaultGrid_ContextMenuOpening">
+                  CellEditEnding="VaultGrid_CellEditEnding">
 
             <!-- 右键菜单 -->
             <DataGrid.ContextMenu>
