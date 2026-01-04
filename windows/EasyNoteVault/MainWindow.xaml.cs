@@ -13,7 +13,7 @@ namespace EasyNoteVault
 {
     public partial class MainWindow : Window
     {
-        // 全量数据（真实）
+        // 全量数据（真实源）
         private ObservableCollection<VaultItem> AllItems =
             new ObservableCollection<VaultItem>();
 
@@ -93,90 +93,42 @@ namespace EasyNoteVault
             }
         }
 
-        // ================= 右键粘贴 =================
+        // ================= 右键粘贴（统一校验） =================
         private void PasteMenuItem_Click(object sender, RoutedEventArgs e)
         {
-            if (!Clipboard.ContainsText())
-                return;
+            if (!Clipboard.ContainsText()) return;
+            if (VaultGrid.CurrentCell.Item is not VaultItem item) return;
 
-            if (VaultGrid.CurrentCell.Item == null ||
-                VaultGrid.CurrentCell.Column == null)
-                return;
-
-            VaultGrid.BeginEdit();
-
-            var item = VaultGrid.CurrentCell.Item as VaultItem;
-            if (item == null)
-                return;
-
-            string col = VaultGrid.CurrentCell.Column.Header.ToString();
             string text = Clipboard.GetText();
+            string col = VaultGrid.CurrentCell.Column.Header.ToString();
 
-            if (col == "名称") item.Name = text;
-            else if (col == "网站") item.Url = text;
+            if (col == "网站")
+            {
+                if (!TrySetUrl(item, text))
+                    return;
+            }
+            else if (col == "名称") item.Name = text;
             else if (col == "账号") item.Account = text;
             else if (col == "密码") item.Password = text;
             else if (col == "备注") item.Remark = text;
-
-            VaultGrid.CommitEdit(DataGridEditingUnit.Cell, true);
-            VaultGrid.CommitEdit(DataGridEditingUnit.Row, true);
         }
 
-        // ================= 重复网址：禁止 + 定位 =================
+        // ================= 手动编辑完成（统一校验） =================
         private void VaultGrid_CellEditEnding(object sender, DataGridCellEditEndingEventArgs e)
         {
-            if (e.Column.Header.ToString() != "网站")
-                return;
+            if (e.Column.Header.ToString() != "网站") return;
+            if (e.Row.Item is not VaultItem item) return;
 
-            var current = e.Row.Item as VaultItem;
-            if (current == null)
-                return;
+            var tb = e.EditingElement as TextBox;
+            if (tb == null) return;
 
-            string newUrl = NormalizeUrl(current.Url);
-            if (string.IsNullOrEmpty(newUrl))
-                return;
-
-            var duplicate = AllItems
-                .FirstOrDefault(x => x != current &&
-                                     NormalizeUrl(x.Url) == newUrl);
-
-            if (duplicate != null)
+            if (!TrySetUrl(item, tb.Text))
             {
-                current.Url = "";
-
-                MessageBox.Show(
-                    $"该网站已存在，不能重复添加：\n{duplicate.Url}",
-                    "重复网址",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
-
-                VaultGrid.SelectedItem = duplicate;
-                VaultGrid.ScrollIntoView(duplicate);
-
-                Dispatcher.BeginInvoke(new Action(() =>
-                {
-                    VaultGrid.CancelEdit(DataGridEditingUnit.Cell);
-                    VaultGrid.CancelEdit(DataGridEditingUnit.Row);
-                }));
+                e.Cancel = true;
             }
         }
 
-        // ================= 导入 =================
-        private void Import_Click(object sender, RoutedEventArgs e)
-        {
-            OpenFileDialog dlg = new OpenFileDialog
-            {
-                Filter = "文本文件 (*.txt)|*.txt|JSON 文件 (*.json)|*.json"
-            };
-
-            if (dlg.ShowDialog() != true)
-                return;
-
-            string ext = Path.GetExtension(dlg.FileName).ToLower();
-            if (ext == ".txt") ImportTxt(dlg.FileName);
-            else if (ext == ".json") ImportJson(dlg.FileName);
-        }
-
+        // ================= 导入 TXT / JSON（统一校验） =================
         private void ImportTxt(string path)
         {
             var lines = File.ReadAllLines(path, Encoding.UTF8);
@@ -186,17 +138,19 @@ namespace EasyNoteVault
                 var parts = line.Split(new[] { "  " }, StringSplitOptions.RemoveEmptyEntries);
                 if (parts.Length < 5) continue;
 
-                var v = new VaultItem
+                var item = new VaultItem
                 {
                     Name = parts[0],
-                    Url = parts[1],
                     Account = parts[2],
                     Password = parts[3],
                     Remark = parts[4]
                 };
 
-                AllItems.Add(v);
-                ViewItems.Add(v);
+                if (TrySetUrl(item, parts[1]))
+                {
+                    AllItems.Add(item);
+                    ViewItems.Add(item);
+                }
             }
         }
 
@@ -206,48 +160,50 @@ namespace EasyNoteVault
             var list = JsonSerializer.Deserialize<VaultItem[]>(json);
             if (list == null) return;
 
-            foreach (var v in list)
+            foreach (var item in list)
             {
-                AllItems.Add(v);
-                ViewItems.Add(v);
+                if (TrySetUrl(item, item.Url))
+                {
+                    AllItems.Add(item);
+                    ViewItems.Add(item);
+                }
             }
         }
 
-        // ================= 导出 =================
-        private void Export_Click(object sender, RoutedEventArgs e)
+        // ================= 🔥 统一网站校验（终极） =================
+        private bool TrySetUrl(VaultItem current, string newUrl)
         {
-            string fileName = DateTime.Now.ToString("yyyyMMddHH") + ".txt";
+            string normalized = NormalizeUrl(newUrl);
+            if (string.IsNullOrEmpty(normalized))
+                return true;
 
-            SaveFileDialog dlg = new SaveFileDialog
+            var duplicate = AllItems
+                .FirstOrDefault(x => x != current &&
+                                     NormalizeUrl(x.Url) == normalized);
+
+            if (duplicate != null)
             {
-                FileName = fileName,
-                Filter = "文本文件 (*.txt)|*.txt"
-            };
+                MessageBox.Show(
+                    $"该网站已存在，不能重复添加：\n{duplicate.Url}",
+                    "重复网址",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
 
-            if (dlg.ShowDialog() != true)
-                return;
-
-            var sb = new StringBuilder();
-            sb.AppendLine("名称  网站  账号  密码  备注");
-
-            foreach (var v in AllItems)
-            {
-                sb.AppendLine(
-                    $"{v.Name}  {v.Url}  {v.Account}  {v.Password}  {v.Remark}");
+                VaultGrid.SelectedItem = duplicate;
+                VaultGrid.ScrollIntoView(duplicate);
+                return false;
             }
 
-            File.WriteAllText(dlg.FileName, sb.ToString(), Encoding.UTF8);
+            current.Url = newUrl;
+            return true;
         }
 
+        // ================= 工具 =================
         private static string NormalizeUrl(string url)
         {
-            if (string.IsNullOrWhiteSpace(url))
-                return "";
-
+            if (string.IsNullOrWhiteSpace(url)) return "";
             url = url.Trim().ToLower();
-            if (url.EndsWith("/"))
-                url = url.TrimEnd('/');
-
+            if (url.EndsWith("/")) url = url.TrimEnd('/');
             return url;
         }
     }
