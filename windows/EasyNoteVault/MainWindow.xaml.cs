@@ -146,6 +146,10 @@ namespace EasyNoteVault
             {
                 if (e.ClickCount != 1) return;
 
+                // 点到按钮（⋯）就不触发编辑，让它自己弹窗
+                if (FindVisualParent<Button>(e.OriginalSource as DependencyObject) != null)
+                    return;
+
                 var dep = e.OriginalSource as DependencyObject;
                 if (dep == null) return;
 
@@ -153,9 +157,6 @@ namespace EasyNoteVault
                 if (cell == null) return;
 
                 if (cell.Column == null || cell.IsReadOnly) return;
-
-                if (e.OriginalSource is TextBox || e.OriginalSource is PasswordBox)
-                    return;
 
                 var rowItem = cell.DataContext;
                 if (rowItem == null) return;
@@ -177,6 +178,10 @@ namespace EasyNoteVault
         {
             try
             {
+                // 双击在按钮上不要复制
+                if (FindVisualParent<Button>(e.OriginalSource as DependencyObject) != null)
+                    return;
+
                 string text = "";
 
                 if (e.OriginalSource is TextBlock tb)
@@ -280,7 +285,6 @@ namespace EasyNoteVault
 
                 ForceCommitGridEdits();
 
-                // 账号/密码改动后同步到 Credentials[0]
                 EnsureCredentials(item);
                 SyncPrimaryToCredentials(item);
 
@@ -488,17 +492,17 @@ namespace EasyNoteVault
             }
         }
 
-        // ================= ✅ 多账号密码：弹窗管理 =================
+        // ================= ✅ 多账号密码：点“⋯”弹窗管理 =================
         private void ManageCreds_Click(object sender, RoutedEventArgs e)
         {
             try
             {
                 ForceCommitGridEdits();
 
-                var btn = sender as Button;
-                if (btn == null) return;
+                var fe = sender as FrameworkElement;
+                if (fe == null) return;
 
-                var item = btn.DataContext as VaultItem;
+                var item = fe.DataContext as VaultItem;
                 if (item == null) return;
 
                 EnsureCredentials(item);
@@ -509,14 +513,17 @@ namespace EasyNoteVault
 
                 if (ok == true)
                 {
-                    item.Credentials = dlg.Result;
+                    // ✅ 不替换集合对象（避免 Count 绑定不刷新），只做 Clear/Add
+                    item.Credentials.Clear();
+                    foreach (var c in dlg.Result)
+                        item.Credentials.Add(new CredentialPair { Account = c.Account ?? "", Password = c.Password ?? "" });
 
-                    // 主表显示第一组
-                    SyncCredentialsToPrimary(item);
+                    EnsureCredentials(item);          // 保证至少1条
+                    SyncCredentialsToPrimary(item);   // 主表显示第一组
 
                     RefreshView();
                     SaveData();
-                    ShowToast("已保存多账号");
+                    ShowToast($"已保存（{item.Credentials.Count}）");
                 }
             }
             catch (Exception ex)
@@ -718,7 +725,8 @@ namespace EasyNoteVault
                 IsReadOnly = false,
                 SelectionUnit = DataGridSelectionUnit.FullRow,
                 RowHeight = 30,
-                Margin = new Thickness(0, 10, 0, 10)
+                Margin = new Thickness(0, 10, 0, 10),
+                FontSize = 14
             };
 
             _grid.Columns.Add(new DataGridTextColumn
