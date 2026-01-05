@@ -1,4 +1,3 @@
-#nullable enable
 using System;
 using System.IO;
 using System.Net;
@@ -129,18 +128,18 @@ namespace EasyNoteVault
         private readonly Func<string> _getLocalFilePath;
         private readonly Func<string> _getRemoteFileUrl;
 
-        // 防抖 + 限频（避免免费 WebDAV 频率限制触发）
+        // 防抖 + 限频
         private readonly TimeSpan _debounce = TimeSpan.FromSeconds(2);
         private readonly TimeSpan _minUploadInterval = TimeSpan.FromSeconds(15);
 
-        private CancellationTokenSource? _cts;
+        private CancellationTokenSource _cts = null; // 允许为 null（不使用 ?，避免 CS8632）
         private DateTime _lastUploadUtc = DateTime.MinValue;
-        private readonly object _lock = new();
+        private readonly object _lock = new object();
 
         public bool Enabled { get; set; } = false;
 
         // (state, shortMsg, detail)
-        public event Action<WebDavSyncState, string, string>? StatusChanged;
+        public event Action<WebDavSyncState, string, string> StatusChanged;
 
         public WebDavSyncService(
             string username,
@@ -155,6 +154,7 @@ namespace EasyNoteVault
             {
                 AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
             };
+
             _http = new HttpClient(handler);
 
             var token = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{username}:{password}"));
@@ -163,7 +163,8 @@ namespace EasyNoteVault
 
         private void Emit(WebDavSyncState state, string msg, string detail)
         {
-            StatusChanged?.Invoke(state, msg, detail);
+            var ev = StatusChanged;
+            if (ev != null) ev(state, msg, detail);
         }
 
         public void NotifyLocalChanged()
@@ -172,7 +173,12 @@ namespace EasyNoteVault
 
             lock (_lock)
             {
-                _cts?.Cancel();
+                try
+                {
+                    if (_cts != null) _cts.Cancel();
+                }
+                catch { }
+
                 _cts = new CancellationTokenSource();
                 var ct = _cts.Token;
 
@@ -198,7 +204,7 @@ namespace EasyNoteVault
                     }
                     catch (OperationCanceledException)
                     {
-                        // 被新的保存动作打断，不算失败
+                        // 新保存打断，不算失败
                     }
                     catch (Exception ex)
                     {
@@ -209,7 +215,7 @@ namespace EasyNoteVault
             }
         }
 
-        public async Task<bool> TestAsync(CancellationToken ct = default)
+        public async Task<bool> TestAsync(CancellationToken ct = default(CancellationToken))
         {
             if (!Enabled)
             {
@@ -222,25 +228,28 @@ namespace EasyNoteVault
             {
                 var url = _getRemoteFileUrl();
 
-                using var req = new HttpRequestMessage(new HttpMethod("PROPFIND"), url);
-                req.Headers.Add("Depth", "0");
-
-                using var resp = await _http.SendAsync(req, ct);
-
-                bool ok = resp.StatusCode == HttpStatusCode.MultiStatus
-                          || resp.IsSuccessStatusCode
-                          || resp.StatusCode == HttpStatusCode.NotFound;
-
-                if (ok)
+                using (var req = new HttpRequestMessage(new HttpMethod("PROPFIND"), url))
                 {
-                    Emit(WebDavSyncState.Connected, "已连接",
-                        $"[{DateTime.Now:HH:mm:ss}] 已连接");
-                    return true;
-                }
+                    req.Headers.Add("Depth", "0");
 
-                Emit(WebDavSyncState.Failed, "连接失败",
-                    $"[{DateTime.Now:HH:mm:ss}] 连接失败（点击查看原因）\n原因：HTTP {(int)resp.StatusCode}");
-                return false;
+                    using (var resp = await _http.SendAsync(req, ct))
+                    {
+                        bool ok = resp.StatusCode == HttpStatusCode.MultiStatus
+                                  || resp.IsSuccessStatusCode
+                                  || resp.StatusCode == HttpStatusCode.NotFound;
+
+                        if (ok)
+                        {
+                            Emit(WebDavSyncState.Connected, "已连接",
+                                $"[{DateTime.Now:HH:mm:ss}] 已连接");
+                            return true;
+                        }
+
+                        Emit(WebDavSyncState.Failed, "连接失败",
+                            $"[{DateTime.Now:HH:mm:ss}] 连接失败（点击查看原因）\n原因：HTTP {(int)resp.StatusCode}");
+                        return false;
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -250,30 +259,45 @@ namespace EasyNoteVault
             }
         }
 
-        public async Task UploadAsync(CancellationToken ct = default)
+        public async Task UploadAsync(CancellationToken ct = default(CancellationToken))
         {
             var local = _getLocalFilePath();
             if (!File.Exists(local)) return;
 
             byte[] bytes = await File.ReadAllBytesAsync(local, ct);
 
-            using var content = new ByteArrayContent(bytes);
-            content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+            using (var content = new ByteArrayContent(bytes))
+            {
+                content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
 
-            var url = _getRemoteFileUrl();
-            using var req = new HttpRequestMessage(HttpMethod.Put, url) { Content = content };
-            using var resp = await _http.SendAsync(req, ct);
-            resp.EnsureSuccessStatusCode();
+                var url = _getRemoteFileUrl();
+                using (var req = new HttpRequestMessage(HttpMethod.Put, url) { Content = content })
+                using (var resp = await _http.SendAsync(req, ct))
+                {
+                    resp.EnsureSuccessStatusCode();
+                }
+            }
         }
 
         public void Dispose()
         {
             lock (_lock)
             {
-                _cts?.Cancel();
-                _cts?.Dispose();
+                try
+                {
+                    if (_cts != null) _cts.Cancel();
+                }
+                catch { }
+
+                try
+                {
+                    if (_cts != null) _cts.Dispose();
+                }
+                catch { }
+
                 _cts = null;
             }
+
             _http.Dispose();
         }
     }
