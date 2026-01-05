@@ -42,3 +42,6 @@ EasyNoteVault
 推送 tag（如 v1.0.0）后自动构建：
 - Windows x64 单文件 exe
 - Android APK
+
+- <img width="1011" height="374" alt="image" src="https://github.com/user-attachments/assets/768121b1-ae4d-48a7-89ba-ebf5770cd3e2" />
+
