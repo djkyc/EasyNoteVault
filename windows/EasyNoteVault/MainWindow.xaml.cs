@@ -59,7 +59,6 @@ namespace EasyNoteVault
             try
             {
                 ToastText.Text = message;
-
                 ToastBorder.Visibility = Visibility.Visible;
                 ToastBorder.Opacity = 1;
 
@@ -106,13 +105,17 @@ namespace EasyNoteVault
             catch { }
         }
 
+        // ================= 加载 / 保存 =================
         private void LoadData()
         {
             AllItems.Clear();
             ViewItems.Clear();
 
             foreach (var v in DataStore.Load())
+            {
+                EnsureCredentials(v);
                 AllItems.Add(v);
+            }
 
             RefreshView();
         }
@@ -120,11 +123,17 @@ namespace EasyNoteVault
         private void SaveData()
         {
             ForceCommitGridEdits();
+
+            // 保存前：把主表 Account/Password 同步到 Credentials[0]
+            foreach (var it in AllItems)
+                SyncPrimaryToCredentials(it);
+
             DataStore.Save(AllItems);
 
             if (_webdav != null) _webdav.NotifyLocalChanged();
         }
 
+        // ================= 搜索 =================
         private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
         {
             RefreshView();
@@ -181,7 +190,6 @@ namespace EasyNoteVault
 
                 Clipboard.SetText(text);
                 ShowToast("已复制");
-
                 e.Handled = true;
             }
             catch { }
@@ -250,6 +258,7 @@ namespace EasyNoteVault
                 else
                 {
                     item = new VaultItem();
+                    EnsureCredentials(item);
                     AllItems.Add(item);
 
                     if (!string.IsNullOrWhiteSpace(SearchBox.Text))
@@ -270,6 +279,11 @@ namespace EasyNoteVault
                 else if (col == "备注") item.Remark = clip;
 
                 ForceCommitGridEdits();
+
+                // 账号/密码改动后同步到 Credentials[0]
+                EnsureCredentials(item);
+                SyncPrimaryToCredentials(item);
+
                 RefreshView();
                 SaveData();
             }
@@ -303,11 +317,16 @@ namespace EasyNoteVault
             Dispatcher.BeginInvoke(new Action(() =>
             {
                 ForceCommitGridEdits();
+
+                EnsureCredentials(item);
+                SyncPrimaryToCredentials(item);
+
                 RefreshView();
                 SaveData();
             }), DispatcherPriority.Background);
         }
 
+        // ================= 网址去重：重复 -> 提示 + 定位 + 拒绝 =================
         private DataGridColumn GetColumnByHeader(string header)
         {
             return VaultGrid.Columns.FirstOrDefault(c =>
@@ -365,6 +384,7 @@ namespace EasyNoteVault
             return url;
         }
 
+        // ================= 刷新视图 =================
         private void RefreshView()
         {
             string key = (SearchBox.Text ?? "").Trim().ToLower();
@@ -383,6 +403,7 @@ namespace EasyNoteVault
             }
         }
 
+        // ================= 导入 / 导出 =================
         private void Import_Click(object sender, RoutedEventArgs e)
         {
             OpenFileDialog dlg = new OpenFileDialog
@@ -442,6 +463,9 @@ namespace EasyNoteVault
                     Remark = parts[4]
                 };
 
+                EnsureCredentials(item);
+                SyncPrimaryToCredentials(item);
+
                 if (TrySetUrl(item, parts[1]))
                     AllItems.Add(item);
             }
@@ -456,11 +480,81 @@ namespace EasyNoteVault
 
             foreach (var item in list)
             {
+                EnsureCredentials(item);
+                SyncPrimaryToCredentials(item);
+
                 if (TrySetUrl(item, item.Url))
                     AllItems.Add(item);
             }
         }
 
+        // ================= ✅ 多账号密码：弹窗管理 =================
+        private void ManageCreds_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                ForceCommitGridEdits();
+
+                var btn = sender as Button;
+                if (btn == null) return;
+
+                var item = btn.DataContext as VaultItem;
+                if (item == null) return;
+
+                EnsureCredentials(item);
+                SyncPrimaryToCredentials(item);
+
+                var dlg = new CredentialsManagerWindow(item, this);
+                var ok = dlg.ShowDialog();
+
+                if (ok == true)
+                {
+                    item.Credentials = dlg.Result;
+
+                    // 主表显示第一组
+                    SyncCredentialsToPrimary(item);
+
+                    RefreshView();
+                    SaveData();
+                    ShowToast("已保存多账号");
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, "管理账号失败", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void EnsureCredentials(VaultItem item)
+        {
+            if (item.Credentials == null)
+                item.Credentials = new ObservableCollection<CredentialPair>();
+
+            if (item.Credentials.Count == 0)
+            {
+                item.Credentials.Add(new CredentialPair
+                {
+                    Account = item.Account ?? "",
+                    Password = item.Password ?? ""
+                });
+            }
+        }
+
+        private void SyncPrimaryToCredentials(VaultItem item)
+        {
+            EnsureCredentials(item);
+            item.Credentials[0].Account = item.Account ?? "";
+            item.Credentials[0].Password = item.Password ?? "";
+        }
+
+        private void SyncCredentialsToPrimary(VaultItem item)
+        {
+            EnsureCredentials(item);
+            item.Account = item.Credentials[0].Account ?? "";
+            item.Password = item.Credentials[0].Password ?? "";
+        }
+
+        // ================= WebDAV（保持不变） =================
         private void WebDav_Click(object sender, RoutedEventArgs e)
         {
             var win = new WebDavSettingsWindow(_webdavSettings) { Owner = this };
@@ -489,14 +583,18 @@ namespace EasyNoteVault
 
             if (!_webdavSettings.Enabled)
             {
-                SetDot(Brushes.Gray, "未启用 WebDAV");
+                _webdavLastDetail = $"[{DateTime.Now:HH:mm:ss}] 未启用 WebDAV";
+                WebDavStatusBtn.Background = Brushes.Gray;
+                WebDavStatusBtn.ToolTip = _webdavLastDetail;
                 return;
             }
 
             var pass = WebDavSettingsStore.GetPassword(_webdavSettings);
             if (string.IsNullOrWhiteSpace(_webdavSettings.Username) || string.IsNullOrWhiteSpace(pass))
             {
-                SetDot(Brushes.IndianRed, "WebDAV 未配置完整（账号/密码为空）");
+                _webdavLastDetail = $"[{DateTime.Now:HH:mm:ss}] WebDAV 未配置完整（账号/密码为空）";
+                WebDavStatusBtn.Background = Brushes.IndianRed;
+                WebDavStatusBtn.ToolTip = _webdavLastDetail;
                 return;
             }
 
@@ -531,15 +629,9 @@ namespace EasyNoteVault
 
             _ = _webdav.TestAsync();
         }
-
-        private void SetDot(Brush brush, string detail)
-        {
-            _webdavLastDetail = $"[{DateTime.Now:HH:mm:ss}] {detail}";
-            WebDavStatusBtn.Background = brush;
-            WebDavStatusBtn.ToolTip = _webdavLastDetail;
-        }
     }
 
+    // ================= 数据模型：一个网站多个账号密码 =================
     public class VaultItem
     {
         public string Name { get; set; } = "";
@@ -547,8 +639,157 @@ namespace EasyNoteVault
         public string Account { get; set; } = "";
         public string Password { get; set; } = "";
         public string Remark { get; set; } = "";
+
+        public ObservableCollection<CredentialPair> Credentials { get; set; } = new ObservableCollection<CredentialPair>();
     }
 
+    public class CredentialPair
+    {
+        public string Account { get; set; } = "";
+        public string Password { get; set; } = "";
+    }
+
+    // ================= 多账号管理弹窗（不新增文件，写在同文件） =================
+    public class CredentialsManagerWindow : Window
+    {
+        private readonly ObservableCollection<CredentialPair> _working;
+        private readonly DataGrid _grid;
+
+        public ObservableCollection<CredentialPair> Result { get; private set; }
+
+        public CredentialsManagerWindow(VaultItem item, Window owner)
+        {
+            Owner = owner;
+            Title = "多账号 / 密码管理";
+            Width = 520;
+            Height = 380;
+            WindowStartupLocation = WindowStartupLocation.CenterOwner;
+            ResizeMode = ResizeMode.NoResize;
+
+            _working = new ObservableCollection<CredentialPair>(
+                (item.Credentials ?? new ObservableCollection<CredentialPair>())
+                .Select(x => new CredentialPair { Account = x.Account, Password = x.Password })
+            );
+
+            if (_working.Count == 0)
+                _working.Add(new CredentialPair());
+
+            Result = _working;
+
+            var root = new Grid { Margin = new Thickness(12) };
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            var top = new StackPanel { Orientation = Orientation.Horizontal };
+            var addBtn = new Button { Content = "＋新增", Width = 90, Margin = new Thickness(0, 0, 8, 0) };
+            var delBtn = new Button { Content = "－删除选中", Width = 110 };
+
+            addBtn.Click += (_, __) =>
+            {
+                _working.Add(new CredentialPair());
+                _grid.SelectedIndex = _working.Count - 1;
+                _grid.ScrollIntoView(_grid.SelectedItem);
+                _grid.Focus();
+                _grid.BeginEdit();
+            };
+
+            delBtn.Click += (_, __) =>
+            {
+                if (_grid.SelectedItem is CredentialPair sel)
+                {
+                    _working.Remove(sel);
+                    if (_working.Count == 0)
+                        _working.Add(new CredentialPair());
+                }
+            };
+
+            top.Children.Add(addBtn);
+            top.Children.Add(delBtn);
+            Grid.SetRow(top, 0);
+            root.Children.Add(top);
+
+            _grid = new DataGrid
+            {
+                ItemsSource = _working,
+                AutoGenerateColumns = false,
+                CanUserAddRows = false,
+                CanUserDeleteRows = false,
+                IsReadOnly = false,
+                SelectionUnit = DataGridSelectionUnit.FullRow,
+                RowHeight = 30,
+                Margin = new Thickness(0, 10, 0, 10)
+            };
+
+            _grid.Columns.Add(new DataGridTextColumn
+            {
+                Header = "账号",
+                Binding = new System.Windows.Data.Binding("Account"),
+                Width = new DataGridLength(1, DataGridLengthUnitType.Star)
+            });
+
+            _grid.Columns.Add(new DataGridTextColumn
+            {
+                Header = "密码",
+                Binding = new System.Windows.Data.Binding("Password"),
+                Width = new DataGridLength(1, DataGridLengthUnitType.Star)
+            });
+
+            _grid.PreviewKeyDown += (s, e) =>
+            {
+                if (e.Key == Key.Delete)
+                {
+                    if (_grid.SelectedItem is CredentialPair sel)
+                    {
+                        _working.Remove(sel);
+                        if (_working.Count == 0)
+                            _working.Add(new CredentialPair());
+                        e.Handled = true;
+                    }
+                }
+            };
+
+            Grid.SetRow(_grid, 1);
+            root.Children.Add(_grid);
+
+            var bottom = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+            var ok = new Button { Content = "保存", Width = 90, Margin = new Thickness(0, 0, 8, 0) };
+            var cancel = new Button { Content = "取消", Width = 90 };
+
+            ok.Click += (_, __) =>
+            {
+                // 去掉尾部完全空行
+                for (int i = _working.Count - 1; i >= 0; i--)
+                {
+                    var c = _working[i];
+                    if (string.IsNullOrWhiteSpace(c.Account) && string.IsNullOrWhiteSpace(c.Password))
+                        _working.RemoveAt(i);
+                    else
+                        break;
+                }
+                if (_working.Count == 0)
+                    _working.Add(new CredentialPair());
+
+                DialogResult = true;
+                Close();
+            };
+
+            cancel.Click += (_, __) =>
+            {
+                DialogResult = false;
+                Close();
+            };
+
+            bottom.Children.Add(ok);
+            bottom.Children.Add(cancel);
+            Grid.SetRow(bottom, 2);
+            root.Children.Add(bottom);
+
+            Content = root;
+        }
+    }
+
+    // ================= DataStore（加密保存到 data.enc） =================
     public static class DataStore
     {
         public static readonly string FilePath =
