@@ -1,4 +1,3 @@
-#nullable enable
 using Microsoft.Win32;
 using System;
 using System.Collections.ObjectModel;
@@ -24,7 +23,7 @@ namespace EasyNoteVault
 
         // WebDAV
         private WebDavSettings _webdavSettings = new WebDavSettings();
-        private WebDavSyncService? _webdav;
+        private WebDavSyncService _webdav = null;   // 允许为 null（不使用 ?，避免 CS8632）
         private string _webdavLastDetail = "未启用 WebDAV";
 
         public MainWindow()
@@ -43,7 +42,7 @@ namespace EasyNoteVault
             {
                 ForceCommitGridEdits();
                 SaveData();
-                try { _webdav?.Dispose(); } catch { }
+                try { if (_webdav != null) _webdav.Dispose(); } catch { }
             };
         }
 
@@ -76,7 +75,7 @@ namespace EasyNoteVault
             DataStore.Save(AllItems);
 
             // 保存后触发 WebDAV 自动上传（黄->绿/红）
-            _webdav?.NotifyLocalChanged();
+            if (_webdav != null) _webdav.NotifyLocalChanged();
         }
 
         // ================= 搜索 =================
@@ -96,7 +95,7 @@ namespace EasyNoteVault
             }
         }
 
-        // ================= ✅ 右键菜单打开前：只选中单元格（避免 SelectionUnit=Cell 报错） =================
+        // ================= ✅ 右键菜单打开前：只选中单元格（避免 SelectionUnit=Cell 报错/闪退） =================
         private void VaultGrid_ContextMenuOpening(object sender, ContextMenuEventArgs e)
         {
             try
@@ -127,9 +126,9 @@ namespace EasyNoteVault
             VaultGrid.Focus();
         }
 
-        private static T? FindVisualParent<T>(DependencyObject child) where T : DependencyObject
+        private static T FindVisualParent<T>(DependencyObject child) where T : DependencyObject
         {
-            DependencyObject? current = child;
+            DependencyObject current = child;
             while (current != null)
             {
                 if (current is T typed) return typed;
@@ -152,7 +151,7 @@ namespace EasyNoteVault
                 var colObj = VaultGrid.CurrentCell.Column;
                 if (colObj == null) return;
 
-                string col = colObj.Header?.ToString() ?? "";
+                string col = colObj.Header == null ? "" : colObj.Header.ToString();
                 string text = Clipboard.GetText();
 
                 // 当前行对象：VaultItem 或 新增占位符
@@ -199,10 +198,10 @@ namespace EasyNoteVault
         // ================= 编辑结束：网站列重复校验 + 保存 =================
         private void VaultGrid_CellEditEnding(object sender, DataGridCellEditEndingEventArgs e)
         {
-            if (e.Row.Item is not VaultItem item)
+            if (!(e.Row.Item is VaultItem item))
                 return;
 
-            string col = e.Column.Header?.ToString() ?? "";
+            string col = e.Column.Header == null ? "" : e.Column.Header.ToString();
 
             if (col == "网站")
             {
@@ -225,10 +224,10 @@ namespace EasyNoteVault
         }
 
         // ================= 网址去重：重复 -> 提示 + 定位 + 拒绝 =================
-        private DataGridColumn? GetColumnByHeader(string header)
+        private DataGridColumn GetColumnByHeader(string header)
         {
             return VaultGrid.Columns.FirstOrDefault(c =>
-                string.Equals(c.Header?.ToString(), header, StringComparison.Ordinal));
+                string.Equals(c.Header == null ? "" : c.Header.ToString(), header, StringComparison.Ordinal));
         }
 
         private void LocateItemAndFocusCell(VaultItem item, string columnHeader)
@@ -406,7 +405,7 @@ namespace EasyNoteVault
 
         private void SetupWebDavService()
         {
-            try { _webdav?.Dispose(); } catch { }
+            try { if (_webdav != null) _webdav.Dispose(); } catch { }
             _webdav = null;
 
             if (!_webdavSettings.Enabled)
@@ -441,11 +440,11 @@ namespace EasyNoteVault
                     WebDavStatusBtn.ToolTip = detail;
 
                     if (state == WebDavSyncState.Queued)
-                        WebDavStatusBtn.Background = Brushes.Gold; // 黄
+                        WebDavStatusBtn.Background = Brushes.Gold;       // 黄
                     else if (state == WebDavSyncState.Connected || state == WebDavSyncState.Uploaded)
-                        WebDavStatusBtn.Background = Brushes.LimeGreen; // 绿
+                        WebDavStatusBtn.Background = Brushes.LimeGreen;  // 绿
                     else if (state == WebDavSyncState.Failed)
-                        WebDavStatusBtn.Background = Brushes.IndianRed; // 红
+                        WebDavStatusBtn.Background = Brushes.IndianRed;  // 红
                     else
                         WebDavStatusBtn.Background = Brushes.Gray;
                 });
