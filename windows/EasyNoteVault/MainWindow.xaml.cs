@@ -1,8 +1,10 @@
 using Microsoft.Win32;
 using System;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
@@ -43,15 +45,70 @@ namespace EasyNoteVault
             VaultGrid.ScrollIntoView(item);
         }
 
+        // ================= 删除行 =================
+        private void DeleteRow_Click(object sender, RoutedEventArgs e)
+        {
+            var btn = sender as Button;
+            var item = btn?.Tag as VaultItem;
+            if (item == null) return;
+
+            // 显示删除确认对话框
+            string itemName = string.IsNullOrWhiteSpace(item.Name) ? "未命名项目" : item.Name;
+            var result = MessageBox.Show(
+                $"确定要删除 「{itemName}」 吗？\n\n此操作不可撤销。",
+                "删除确认",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning,
+                MessageBoxResult.No);
+
+            if (result == MessageBoxResult.Yes)
+            {
+                Items.Remove(item);
+            }
+        }
+
+        // ================= 密码可见性切换 =================
+        private void TogglePassword_Click(object sender, RoutedEventArgs e)
+        {
+            var btn = sender as Button;
+            var item = btn?.Tag as VaultItem;
+            if (item == null) return;
+
+            // 切换密码可见状态
+            item.IsPasswordVisible = !item.IsPasswordVisible;
+        }
+
         // ================= 单击复制 =================
         private void VaultGrid_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
+            // NOTE: 只在 TextBlock 上触发复制，避免误触按钮
             if (e.OriginalSource is TextBlock tb && !string.IsNullOrWhiteSpace(tb.Text))
             {
-                Clipboard.SetText(tb.Text);
-                MessageBox.Show("已复制", "EasyNoteVault",
-                    MessageBoxButton.OK, MessageBoxImage.Information);
+                // 如果点击的是显示的密码，复制真实密码
+                var item = VaultGrid.CurrentItem as VaultItem;
+                string textToCopy = tb.Text;
+                
+                // 如果是密码遮罩，复制真实密码
+                if (tb.Text == "••••••" && item != null)
+                {
+                    textToCopy = item.Password ?? "";
+                }
+
+                if (!string.IsNullOrEmpty(textToCopy))
+                {
+                    Clipboard.SetText(textToCopy);
+                    // 使用更友好的提示
+                    ShowToast("已复制到剪贴板");
+                }
             }
+        }
+
+        // ================= 友好提示（替代 MessageBox） =================
+        private void ShowToast(string message)
+        {
+            // NOTE: 简单实现，未来可替换为自定义 Toast 控件
+            MessageBox.Show(message, "EasyNoteVault",
+                MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
         // ================= 右键粘贴 =================
@@ -129,6 +186,7 @@ namespace EasyNoteVault
             }
 
             File.WriteAllText(dlg.FileName, sb.ToString(), Encoding.UTF8);
+            ShowToast($"已导出到 {dlg.FileName}");
         }
 
         // ================= 导入（双空格解析） =================
@@ -142,6 +200,7 @@ namespace EasyNoteVault
             if (dlg.ShowDialog() != true) return;
 
             var lines = File.ReadAllLines(dlg.FileName, Encoding.UTF8);
+            int importedCount = 0;
 
             foreach (var line in lines.Skip(1)) // 跳过表头
             {
@@ -159,7 +218,10 @@ namespace EasyNoteVault
                     Password = parts[3],
                     Remark = parts[4]
                 });
+                importedCount++;
             }
+
+            ShowToast($"成功导入 {importedCount} 条记录");
         }
 
         private static string NormalizeUrl(string url)
@@ -171,12 +233,85 @@ namespace EasyNoteVault
         }
     }
 
-    public class VaultItem
+    /// <summary>
+    /// 保险库条目数据模型
+    /// 实现 INotifyPropertyChanged 以支持 UI 动态更新
+    /// </summary>
+    public class VaultItem : INotifyPropertyChanged
     {
-        public string Name { get; set; }
-        public string Url { get; set; }
-        public string Account { get; set; }
-        public string Password { get; set; }
-        public string Remark { get; set; }
+        private string _name;
+        private string _url;
+        private string _account;
+        private string _password;
+        private string _remark;
+        private bool _isPasswordVisible = false;
+
+        public event PropertyChangedEventHandler PropertyChanged;
+
+        // NOTE: 用于触发属性变更通知
+        protected void OnPropertyChanged([CallerMemberName] string propertyName = null)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
+
+        public string Name
+        {
+            get => _name;
+            set { _name = value; OnPropertyChanged(); }
+        }
+
+        public string Url
+        {
+            get => _url;
+            set { _url = value; OnPropertyChanged(); }
+        }
+
+        public string Account
+        {
+            get => _account;
+            set { _account = value; OnPropertyChanged(); }
+        }
+
+        public string Password
+        {
+            get => _password;
+            set 
+            { 
+                _password = value; 
+                OnPropertyChanged(); 
+                OnPropertyChanged(nameof(DisplayPassword)); 
+            }
+        }
+
+        public string Remark
+        {
+            get => _remark;
+            set { _remark = value; OnPropertyChanged(); }
+        }
+
+        /// <summary>
+        /// 密码是否可见
+        /// </summary>
+        public bool IsPasswordVisible
+        {
+            get => _isPasswordVisible;
+            set
+            {
+                _isPasswordVisible = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(DisplayPassword));
+                OnPropertyChanged(nameof(EyeIcon));
+            }
+        }
+
+        /// <summary>
+        /// 显示的密码（根据可见性状态返回真实密码或遮罩）
+        /// </summary>
+        public string DisplayPassword => IsPasswordVisible ? Password : "••••••";
+
+        /// <summary>
+        /// 眼睛图标（根据可见性状态切换）
+        /// </summary>
+        public string EyeIcon => IsPasswordVisible ? "🙈" : "👁";
     }
 }
