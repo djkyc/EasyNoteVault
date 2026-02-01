@@ -1,561 +1,317 @@
 using Microsoft.Win32;
 using System;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
-using System.Security.Cryptography;
+using System.Runtime.CompilerServices;
 using System.Text;
-using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Threading;
 
 namespace EasyNoteVault
 {
     public partial class MainWindow : Window
     {
-        private ObservableCollection<VaultItem> AllItems = new ObservableCollection<VaultItem>();
-        private ObservableCollection<VaultItem> ViewItems = new ObservableCollection<VaultItem>();
-
-        private WebDavSettings _webdavSettings = new WebDavSettings();
-        private WebDavSyncService _webdav = null;
-        private string _webdavLastDetail = "未启用 WebDAV";
+        public ObservableCollection<VaultItem> Items { get; } =
+            new ObservableCollection<VaultItem>();
 
         public MainWindow()
         {
             InitializeComponent();
-            VaultGrid.ItemsSource = ViewItems;
+            VaultGrid.ItemsSource = Items;
 
-            Loaded += (_, _) =>
+            // 示例数据
+            Items.Add(new VaultItem
             {
-                LoadData();
-                LoadWebDavSettingsAndSetup();
-            };
+                Name = "示例",
+                Url = "https://example.com",
+                Account = "test@example.com",
+                Password = "123456",
+                Remark = "这是示例数据"
+            });
 
-            Closing += (_, _) =>
-            {
-                ForceCommitGridEdits();
-                SaveData();
-                try { if (_webdav != null) _webdav.Dispose(); } catch { }
-            };
+            VaultGrid.PreviewMouseLeftButtonUp += VaultGrid_PreviewMouseLeftButtonUp;
+            VaultGrid.CellEditEnding += VaultGrid_CellEditEnding;
         }
 
-        private void ForceCommitGridEdits()
+        // ================= 新增行 =================
+        private void AddRow_Click(object sender, RoutedEventArgs e)
         {
-            try
+            var item = new VaultItem();
+            Items.Add(item);
+            VaultGrid.SelectedItem = item;
+            VaultGrid.ScrollIntoView(item);
+        }
+
+        // ================= 删除行 =================
+        private void DeleteRow_Click(object sender, RoutedEventArgs e)
+        {
+            var btn = sender as Button;
+            var item = btn?.Tag as VaultItem;
+            if (item == null) return;
+
+            // 显示删除确认对话框
+            string itemName = string.IsNullOrWhiteSpace(item.Name) ? "未命名项目" : item.Name;
+            var result = MessageBox.Show(
+                $"确定要删除 「{itemName}」 吗？\n\n此操作不可撤销。",
+                "删除确认",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning,
+                MessageBoxResult.No);
+
+            if (result == MessageBoxResult.Yes)
             {
-                VaultGrid.CommitEdit(DataGridEditingUnit.Cell, true);
-                VaultGrid.CommitEdit(DataGridEditingUnit.Row, true);
+                Items.Remove(item);
             }
-            catch { }
         }
 
-        private void LoadData()
+        // ================= 密码可见性切换 =================
+        private void TogglePassword_Click(object sender, RoutedEventArgs e)
         {
-            AllItems.Clear();
-            ViewItems.Clear();
+            var btn = sender as Button;
+            var item = btn?.Tag as VaultItem;
+            if (item == null) return;
 
-            foreach (var v in DataStore.Load())
-                AllItems.Add(v);
-
-            RefreshView();
+            // 切换密码可见状态
+            item.IsPasswordVisible = !item.IsPasswordVisible;
         }
 
-        private void SaveData()
+        // ================= 单击复制 =================
+        private void VaultGrid_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
-            ForceCommitGridEdits();
-            DataStore.Save(AllItems);
-
-            if (_webdav != null) _webdav.NotifyLocalChanged();
-        }
-
-        private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
-        {
-            RefreshView();
-        }
-
-        // ================= ✅ 单击：进入编辑（可直接输入） =================
-        private void VaultGrid_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-        {
-            try
+            // NOTE: 只在 TextBlock 上触发复制，避免误触按钮
+            if (e.OriginalSource is TextBlock tb && !string.IsNullOrWhiteSpace(tb.Text))
             {
-                if (e.ClickCount != 1) return;
-
-                var dep = e.OriginalSource as DependencyObject;
-                if (dep == null) return;
-
-                var cell = FindVisualParent<DataGridCell>(dep);
-                if (cell == null) return;
-
-                // 表头/空白/只读：不处理
-                if (cell.Column == null || cell.IsReadOnly) return;
-
-                // 如果点在编辑控件上就不抢
-                if (e.OriginalSource is TextBox || e.OriginalSource is PasswordBox)
-                    return;
-
-                var rowItem = cell.DataContext;
-                if (rowItem == null) return;
-
-                VaultGrid.CurrentCell = new DataGridCellInfo(rowItem, cell.Column);
-                VaultGrid.SelectedCells.Clear();
-                VaultGrid.SelectedCells.Add(VaultGrid.CurrentCell);
-
-                // 用 Dispatcher 确保不会卡住鼠标消息
-                Dispatcher.BeginInvoke(new Action(() =>
+                // 如果点击的是显示的密码，复制真实密码
+                var item = VaultGrid.CurrentItem as VaultItem;
+                string textToCopy = tb.Text;
+                
+                // 如果是密码遮罩，复制真实密码
+                if (tb.Text == "••••••" && item != null)
                 {
-                    VaultGrid.BeginEdit();
-                }), DispatcherPriority.Input);
-            }
-            catch
-            {
-                // 不崩
-            }
-        }
+                    textToCopy = item.Password ?? "";
+                }
 
-        // ================= ✅ 双击：复制单元格内容 =================
-        private void VaultGrid_PreviewMouseDoubleClick(object sender, MouseButtonEventArgs e)
-        {
-            try
-            {
-                string text = "";
-
-                // 显示状态下常见是 TextBlock
-                if (e.OriginalSource is TextBlock tb)
-                    text = tb.Text;
-
-                // 编辑状态下可能是 TextBox
-                if (string.IsNullOrWhiteSpace(text) && e.OriginalSource is TextBox tbox)
-                    text = tbox.Text;
-
-                if (string.IsNullOrWhiteSpace(text))
-                    return;
-
-                Clipboard.SetText(text);
-                MessageBox.Show("已复制", "EasyNoteVault",
-                    MessageBoxButton.OK, MessageBoxImage.Information);
-
-                // 阻止双击触发其它默认行为
-                e.Handled = true;
-            }
-            catch
-            {
-                // 不崩
+                if (!string.IsNullOrEmpty(textToCopy))
+                {
+                    Clipboard.SetText(textToCopy);
+                    // 使用更友好的提示
+                    ShowToast("已复制到剪贴板");
+                }
             }
         }
 
-        // ================= ✅ 右键菜单打开前：只选中单元格（避免 SelectionUnit=Cell 报错/闪退） =================
-        private void VaultGrid_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+        // ================= 友好提示（替代 MessageBox） =================
+        private void ShowToast(string message)
         {
-            try
-            {
-                var dep = e.OriginalSource as DependencyObject;
-                if (dep == null) return;
-
-                var cell = FindVisualParent<DataGridCell>(dep);
-                var row = FindVisualParent<DataGridRow>(dep);
-
-                if (cell == null || row == null) return;
-
-                SetCurrentCellOnly(row.Item, cell.Column);
-            }
-            catch { }
-        }
-
-        private void SetCurrentCellOnly(object rowItem, DataGridColumn column)
-        {
-            VaultGrid.CurrentCell = new DataGridCellInfo(rowItem, column);
-            VaultGrid.SelectedCells.Clear();
-            VaultGrid.SelectedCells.Add(VaultGrid.CurrentCell);
-            VaultGrid.ScrollIntoView(rowItem, column);
-            VaultGrid.Focus();
-        }
-
-        private static T FindVisualParent<T>(DependencyObject child) where T : DependencyObject
-        {
-            DependencyObject current = child;
-            while (current != null)
-            {
-                if (current is T typed) return typed;
-                current = VisualTreeHelper.GetParent(current);
-            }
-            return null;
+            // NOTE: 简单实现，未来可替换为自定义 Toast 控件
+            MessageBox.Show(message, "EasyNoteVault",
+                MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
         // ================= 右键粘贴 =================
         private void PasteMenuItem_Click(object sender, RoutedEventArgs e)
         {
-            if (!Clipboard.ContainsText())
-                return;
+            if (!Clipboard.ContainsText()) return;
+            if (VaultGrid.CurrentCell.Item == null ||
+                VaultGrid.CurrentCell.Column == null) return;
 
-            try
-            {
-                VaultGrid.Focus();
-                ForceCommitGridEdits();
+            string text = Clipboard.GetText();
+            VaultGrid.BeginEdit();
 
-                var colObj = VaultGrid.CurrentCell.Column;
-                if (colObj == null) return;
+            var item = VaultGrid.CurrentCell.Item as VaultItem;
+            if (item == null) return;
 
-                string col = colObj.Header == null ? "" : colObj.Header.ToString();
-                string clip = Clipboard.GetText();
+            string col = VaultGrid.CurrentCell.Column.Header.ToString();
+            if (col == "名称") item.Name = text;
+            else if (col == "网站") item.Url = text;
+            else if (col == "账号") item.Account = text;
+            else if (col == "密码") item.Password = text;
+            else if (col == "备注") item.Remark = text;
 
-                VaultItem item;
-                if (VaultGrid.CurrentCell.Item is VaultItem vi)
-                {
-                    item = vi;
-                }
-                else
-                {
-                    item = new VaultItem();
-                    AllItems.Add(item);
-
-                    if (!string.IsNullOrWhiteSpace(SearchBox.Text))
-                        SearchBox.Text = "";
-
-                    RefreshView();
-                    SetCurrentCellOnly(item, colObj);
-                }
-
-                if (col == "网站")
-                {
-                    if (!TrySetUrl(item, clip))
-                        return;
-                }
-                else if (col == "名称") item.Name = clip;
-                else if (col == "账号") item.Account = clip;
-                else if (col == "密码") item.Password = clip;
-                else if (col == "备注") item.Remark = clip;
-
-                ForceCommitGridEdits();
-                RefreshView();
-                SaveData();
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"粘贴出错：\n{ex.Message}",
-                    "EasyNoteVault", MessageBoxButton.OK, MessageBoxImage.Error);
-            }
+            VaultGrid.CommitEdit(DataGridEditingUnit.Cell, true);
+            VaultGrid.CommitEdit(DataGridEditingUnit.Row, true);
         }
 
-        // ================= 编辑结束：网站列重复校验 + 保存 =================
+        // ================= 重复检测 =================
         private void VaultGrid_CellEditEnding(object sender, DataGridCellEditEndingEventArgs e)
         {
-            if (!(e.Row.Item is VaultItem item))
-                return;
+            if (e.Column.Header.ToString() != "网站") return;
 
-            string col = e.Column.Header == null ? "" : e.Column.Header.ToString();
+            var current = e.Row.Item as VaultItem;
+            if (current == null) return;
 
-            if (col == "网站")
+            string url = NormalizeUrl(current.Url);
+            if (string.IsNullOrEmpty(url)) return;
+
+            var dup = Items
+                .Select((x, i) => new { x, i })
+                .Where(x => x.x != current && NormalizeUrl(x.x.Url) == url)
+                .ToList();
+
+            if (dup.Count > 0)
             {
-                if (e.EditingElement is TextBox tb)
-                {
-                    if (!TrySetUrl(item, tb.Text))
-                    {
-                        e.Cancel = true;
-                        return;
-                    }
-                }
-            }
-
-            Dispatcher.BeginInvoke(new Action(() =>
-            {
-                ForceCommitGridEdits();
-                RefreshView();
-                SaveData();
-            }), DispatcherPriority.Background);
-        }
-
-        private DataGridColumn GetColumnByHeader(string header)
-        {
-            return VaultGrid.Columns.FirstOrDefault(c =>
-                string.Equals(c.Header == null ? "" : c.Header.ToString(), header, StringComparison.Ordinal));
-        }
-
-        private void LocateItemAndFocusCell(VaultItem item, string columnHeader)
-        {
-            if (!ViewItems.Contains(item))
-            {
-                SearchBox.Text = "";
-                RefreshView();
-            }
-
-            var col = GetColumnByHeader(columnHeader);
-            if (col == null) return;
-
-            SetCurrentCellOnly(item, col);
-        }
-
-        private bool TrySetUrl(VaultItem current, string newUrl)
-        {
-            string norm = NormalizeUrl(newUrl);
-            if (string.IsNullOrEmpty(norm))
-            {
-                current.Url = newUrl ?? "";
-                return true;
-            }
-
-            var dup = AllItems.FirstOrDefault(x =>
-                x != current && NormalizeUrl(x.Url) == norm);
-
-            if (dup != null)
-            {
-                MessageBox.Show($"该网站已存在，不能重复添加：\n{dup.Url}",
-                    "重复网址", MessageBoxButton.OK, MessageBoxImage.Warning);
-
-                LocateItemAndFocusCell(dup, "网站");
-                return false;
-            }
-
-            current.Url = newUrl ?? "";
-            return true;
-        }
-
-        private static string NormalizeUrl(string url)
-        {
-            if (string.IsNullOrWhiteSpace(url))
-                return "";
-
-            url = url.Trim().ToLower();
-            if (url.EndsWith("/"))
-                url = url.TrimEnd('/');
-
-            return url;
-        }
-
-        private void RefreshView()
-        {
-            string key = (SearchBox.Text ?? "").Trim().ToLower();
-            ViewItems.Clear();
-
-            foreach (var v in AllItems)
-            {
-                if (string.IsNullOrEmpty(key) ||
-                    (v.Name ?? "").ToLower().Contains(key) ||
-                    (v.Url ?? "").ToLower().Contains(key) ||
-                    (v.Account ?? "").ToLower().Contains(key) ||
-                    (v.Remark ?? "").ToLower().Contains(key))
-                {
-                    ViewItems.Add(v);
-                }
+                MessageBox.Show(
+                    $"网址重复：{current.Url}\n已存在于第 {dup[0].i + 1} 行",
+                    "提示",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
             }
         }
 
-        private void Import_Click(object sender, RoutedEventArgs e)
-        {
-            OpenFileDialog dlg = new OpenFileDialog
-            {
-                Filter = "文本文件 (*.txt)|*.txt|JSON 文件 (*.json)|*.json"
-            };
-
-            if (dlg.ShowDialog() != true)
-                return;
-
-            string ext = Path.GetExtension(dlg.FileName).ToLower();
-            if (ext == ".txt") ImportTxt(dlg.FileName);
-            else if (ext == ".json") ImportJson(dlg.FileName);
-
-            RefreshView();
-            SaveData();
-        }
-
+        // ================= 导出（双空格分隔） =================
         private void Export_Click(object sender, RoutedEventArgs e)
         {
-            ForceCommitGridEdits();
+            string fileName = DateTime.Now.ToString("yyyyMMddHHmm") + ".txt";
 
-            string fileName = DateTime.Now.ToString("yyyyMMddHH") + ".txt";
             SaveFileDialog dlg = new SaveFileDialog
             {
                 FileName = fileName,
                 Filter = "文本文件 (*.txt)|*.txt"
             };
 
-            if (dlg.ShowDialog() != true)
-                return;
+            if (dlg.ShowDialog() != true) return;
 
             var sb = new StringBuilder();
+
+            // 表头（双空格）
             sb.AppendLine("名称  网站  账号  密码  备注");
 
-            foreach (var v in AllItems)
-                sb.AppendLine($"{v.Name}  {v.Url}  {v.Account}  {v.Password}  {v.Remark}");
+            foreach (var item in Items)
+            {
+                sb.AppendLine(
+                    $"{item.Name}  {item.Url}  {item.Account}  {item.Password}  {item.Remark}");
+            }
 
             File.WriteAllText(dlg.FileName, sb.ToString(), Encoding.UTF8);
+            ShowToast($"已导出到 {dlg.FileName}");
         }
 
-        private void ImportTxt(string path)
+        // ================= 导入（双空格解析） =================
+        private void Import_Click(object sender, RoutedEventArgs e)
         {
-            var lines = File.ReadAllLines(path, Encoding.UTF8);
-
-            foreach (var line in lines.Skip(1))
+            OpenFileDialog dlg = new OpenFileDialog
             {
-                var parts = line.Split(new[] { "  " }, StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length < 5)
-                    continue;
+                Filter = "文本文件 (*.txt)|*.txt"
+            };
 
-                var item = new VaultItem
+            if (dlg.ShowDialog() != true) return;
+
+            var lines = File.ReadAllLines(dlg.FileName, Encoding.UTF8);
+            int importedCount = 0;
+
+            foreach (var line in lines.Skip(1)) // 跳过表头
+            {
+                // 用「两个及以上空格」切分
+                var parts = line
+                    .Split(new[] { "  " }, StringSplitOptions.RemoveEmptyEntries);
+
+                if (parts.Length < 5) continue;
+
+                Items.Add(new VaultItem
                 {
                     Name = parts[0],
+                    Url = parts[1],
                     Account = parts[2],
                     Password = parts[3],
                     Remark = parts[4]
-                };
-
-                if (TrySetUrl(item, parts[1]))
-                    AllItems.Add(item);
-            }
-        }
-
-        private void ImportJson(string path)
-        {
-            var json = File.ReadAllText(path, Encoding.UTF8);
-            var list = JsonSerializer.Deserialize<VaultItem[]>(json);
-            if (list == null)
-                return;
-
-            foreach (var item in list)
-            {
-                if (TrySetUrl(item, item.Url))
-                    AllItems.Add(item);
-            }
-        }
-
-        private void WebDav_Click(object sender, RoutedEventArgs e)
-        {
-            var win = new WebDavSettingsWindow(_webdavSettings) { Owner = this };
-            if (win.ShowDialog() == true)
-            {
-                LoadWebDavSettingsAndSetup();
-            }
-        }
-
-        private void WebDavStatus_Click(object sender, RoutedEventArgs e)
-        {
-            MessageBox.Show(_webdavLastDetail, "WebDAV 状态",
-                MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-
-        private void LoadWebDavSettingsAndSetup()
-        {
-            _webdavSettings = WebDavSettingsStore.Load();
-            SetupWebDavService();
-        }
-
-        private void SetupWebDavService()
-        {
-            try { if (_webdav != null) _webdav.Dispose(); } catch { }
-            _webdav = null;
-
-            if (!_webdavSettings.Enabled)
-            {
-                SetDot(Brushes.Gray, "未启用 WebDAV");
-                return;
-            }
-
-            var pass = WebDavSettingsStore.GetPassword(_webdavSettings);
-            if (string.IsNullOrWhiteSpace(_webdavSettings.Username) || string.IsNullOrWhiteSpace(pass))
-            {
-                SetDot(Brushes.IndianRed, "WebDAV 未配置完整（账号/密码为空）");
-                return;
-            }
-
-            string localPath = DataStore.FilePath;
-            string remoteUrl = WebDavUrlBuilder.BuildRemoteFileUrl(_webdavSettings);
-
-            _webdav = new WebDavSyncService(
-                _webdavSettings.Username,
-                pass,
-                () => localPath,
-                () => remoteUrl);
-
-            _webdav.Enabled = true;
-
-            _webdav.StatusChanged += (state, msg, detail) =>
-            {
-                Dispatcher.Invoke(() =>
-                {
-                    _webdavLastDetail = detail;
-                    WebDavStatusBtn.ToolTip = detail;
-
-                    if (state == WebDavSyncState.Queued)
-                        WebDavStatusBtn.Background = Brushes.Gold;
-                    else if (state == WebDavSyncState.Connected || state == WebDavSyncState.Uploaded)
-                        WebDavStatusBtn.Background = Brushes.LimeGreen;
-                    else if (state == WebDavSyncState.Failed)
-                        WebDavStatusBtn.Background = Brushes.IndianRed;
-                    else
-                        WebDavStatusBtn.Background = Brushes.Gray;
                 });
-            };
+                importedCount++;
+            }
 
-            _ = _webdav.TestAsync();
+            ShowToast($"成功导入 {importedCount} 条记录");
         }
 
-        private void SetDot(Brush brush, string detail)
+        private static string NormalizeUrl(string url)
         {
-            _webdavLastDetail = $"[{DateTime.Now:HH:mm:ss}] {detail}";
-            WebDavStatusBtn.Background = brush;
-            WebDavStatusBtn.ToolTip = _webdavLastDetail;
+            if (string.IsNullOrWhiteSpace(url)) return "";
+            url = url.Trim().ToLower();
+            if (url.EndsWith("/")) url = url.TrimEnd('/');
+            return url;
         }
     }
 
-    public class VaultItem
+    /// <summary>
+    /// 保险库条目数据模型
+    /// 实现 INotifyPropertyChanged 以支持 UI 动态更新
+    /// </summary>
+    public class VaultItem : INotifyPropertyChanged
     {
-        public string Name { get; set; } = "";
-        public string Url { get; set; } = "";
-        public string Account { get; set; } = "";
-        public string Password { get; set; } = "";
-        public string Remark { get; set; } = "";
-    }
+        private string _name;
+        private string _url;
+        private string _account;
+        private string _password;
+        private string _remark;
+        private bool _isPasswordVisible = false;
 
-    public static class DataStore
-    {
-        public static readonly string FilePath =
-            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data.enc");
+        public event PropertyChangedEventHandler PropertyChanged;
 
-        public static VaultItem[] Load()
+        // NOTE: 用于触发属性变更通知
+        protected void OnPropertyChanged([CallerMemberName] string propertyName = null)
         {
-            try
-            {
-                if (!File.Exists(FilePath))
-                    return new VaultItem[0];
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
 
-                var bytes = File.ReadAllBytes(FilePath);
+        public string Name
+        {
+            get => _name;
+            set { _name = value; OnPropertyChanged(); }
+        }
 
-                string json;
-                try
-                {
-                    var raw = ProtectedData.Unprotect(bytes, null, DataProtectionScope.CurrentUser);
-                    json = Encoding.UTF8.GetString(raw);
-                }
-                catch
-                {
-                    json = Encoding.UTF8.GetString(bytes);
-                }
+        public string Url
+        {
+            get => _url;
+            set { _url = value; OnPropertyChanged(); }
+        }
 
-                var list = JsonSerializer.Deserialize<VaultItem[]>(json);
-                return list ?? new VaultItem[0];
-            }
-            catch
-            {
-                return new VaultItem[0];
+        public string Account
+        {
+            get => _account;
+            set { _account = value; OnPropertyChanged(); }
+        }
+
+        public string Password
+        {
+            get => _password;
+            set 
+            { 
+                _password = value; 
+                OnPropertyChanged(); 
+                OnPropertyChanged(nameof(DisplayPassword)); 
             }
         }
 
-        public static void Save(ObservableCollection<VaultItem> items)
+        public string Remark
         {
-            try
-            {
-                var json = JsonSerializer.Serialize(items.ToList());
-                var raw = Encoding.UTF8.GetBytes(json);
+            get => _remark;
+            set { _remark = value; OnPropertyChanged(); }
+        }
 
-                var enc = ProtectedData.Protect(raw, null, DataProtectionScope.CurrentUser);
-                File.WriteAllBytes(FilePath, enc);
-            }
-            catch
+        /// <summary>
+        /// 密码是否可见
+        /// </summary>
+        public bool IsPasswordVisible
+        {
+            get => _isPasswordVisible;
+            set
             {
-                // 不弹窗
+                _isPasswordVisible = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(DisplayPassword));
+                OnPropertyChanged(nameof(EyeIcon));
             }
         }
+
+        /// <summary>
+        /// 显示的密码（根据可见性状态返回真实密码或遮罩）
+        /// </summary>
+        public string DisplayPassword => IsPasswordVisible ? Password : "••••••";
+
+        /// <summary>
+        /// 眼睛图标（根据可见性状态切换）
+        /// </summary>
+        public string EyeIcon => IsPasswordVisible ? "🙈" : "👁";
     }
 }

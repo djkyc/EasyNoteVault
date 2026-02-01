@@ -1,122 +1,145 @@
 <Window x:Class="EasyNoteVault.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="EasyNoteVault  |  By: djcyc"
-        Width="1000"
-        Height="650"
-        WindowStartupLocation="CenterScreen">
+        Title="EasyNoteVault"
+        Width="1100"
+        Height="700"
+        WindowStartupLocation="CenterScreen"
+        Background="#F5F5F7">
 
-    <Grid Margin="10">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-        </Grid.RowDefinitions>
+    <!-- 主容器，带圆角和阴影 -->
+    <Border Margin="20" 
+            CornerRadius="12" 
+            Background="White">
+        <Border.Effect>
+            <DropShadowEffect Color="#000000" BlurRadius="20" ShadowDepth="4" Opacity="0.1"/>
+        </Border.Effect>
+        
+        <Grid Margin="24">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
 
-        <!-- 顶部区域 -->
-        <DockPanel Grid.Row="0"
-                   Margin="0,0,0,10"
-                   LastChildFill="False">
+            <!-- 顶部栏 -->
+            <DockPanel Margin="0,0,0,20">
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center">
+                    <TextBlock Text="📝" FontSize="28" Margin="0,0,10,0"/>
+                    <TextBlock Text="EasyNoteVault"
+                               FontSize="26"
+                               FontWeight="Bold"
+                               Foreground="#1D1D1F"/>
+                </StackPanel>
 
-            <!-- 左侧标题 -->
-            <TextBlock Text="EasyNoteVault-随记"
-                       FontSize="22"
-                       FontWeight="Bold"
-                       DockPanel.Dock="Left"/>
+                <StackPanel Orientation="Horizontal"
+                            DockPanel.Dock="Right"
+                            VerticalAlignment="Center">
+                    <Button Content="📥 导入"
+                            Style="{StaticResource AppleButtonStyle}"
+                            Margin="0,0,10,0"
+                            Click="Import_Click"/>
+                    <Button Content="📤 导出"
+                            Style="{StaticResource AppleButtonStyle}"
+                            Click="Export_Click"/>
+                </StackPanel>
+            </DockPanel>
 
-            <!-- 右侧操作区 -->
-            <StackPanel Orientation="Horizontal"
-                        DockPanel.Dock="Right">
+            <!-- 表格 - 应用苹果风格 -->
+            <Border Grid.Row="1" 
+                    CornerRadius="8" 
+                    BorderBrush="#D2D2D7" 
+                    BorderThickness="1"
+                    ClipToBounds="True">
+                <DataGrid x:Name="VaultGrid"
+                          Style="{StaticResource AppleDataGridStyle}"
+                          AutoGenerateColumns="False"
+                          CanUserAddRows="True"
+                          CanUserDeleteRows="False"
+                          IsReadOnly="False"
+                          SelectionUnit="Cell"
+                          HeadersVisibility="Column"
+                          SelectionMode="Single"
+                          BorderThickness="0">
 
-                <!-- 搜索框 -->
-                <TextBox x:Name="SearchBox"
-                         Width="250"
-                         Height="28"
-                         Margin="0,0,10,0"
-                         VerticalContentAlignment="Center"
-                         TextChanged="SearchBox_TextChanged"
-                         ToolTip="搜索（名称 / 网站 / 账号 / 备注）"/>
+                    <!-- 右键菜单 -->
+                    <DataGrid.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="📋 粘贴" Click="PasteMenuItem_Click"/>
+                        </ContextMenu>
+                    </DataGrid.ContextMenu>
 
-                <!-- 导入 -->
-                <Button Content="导入"
-                        Width="80"
-                        Margin="0,0,5,0"
-                        Click="Import_Click"/>
+                    <DataGrid.Columns>
+                        <!-- 名称列 -->
+                        <DataGridTextColumn Header="名称" 
+                                            Binding="{Binding Name}" 
+                                            Width="120"/>
+                        
+                        <!-- 网站列 -->
+                        <DataGridTextColumn Header="网站" 
+                                            Binding="{Binding Url}" 
+                                            Width="200"/>
+                        
+                        <!-- 账号列 -->
+                        <DataGridTextColumn Header="账号" 
+                                            Binding="{Binding Account}" 
+                                            Width="180"/>
+                        
+                        <!-- 密码列（带眼睛切换按钮） -->
+                        <DataGridTemplateColumn Header="密码" Width="180">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding DisplayPassword}" 
+                                                   VerticalAlignment="Center"
+                                                   Margin="0,0,8,0"
+                                                   MinWidth="100"/>
+                                        <Button Content="{Binding EyeIcon}"
+                                                Style="{StaticResource AppleIconButtonStyle}"
+                                                Tag="{Binding}"
+                                                Click="TogglePassword_Click"
+                                                ToolTip="显示/隐藏密码"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                            <DataGridTemplateColumn.CellEditingTemplate>
+                                <DataTemplate>
+                                    <TextBox Text="{Binding Password, UpdateSourceTrigger=PropertyChanged}" 
+                                             BorderThickness="0"
+                                             Padding="0"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellEditingTemplate>
+                        </DataGridTemplateColumn>
+                        
+                        <!-- 备注列 -->
+                        <DataGridTextColumn Header="备注" 
+                                            Binding="{Binding Remark}" 
+                                            Width="*"/>
+                        
+                        <!-- 操作列（删除按钮） -->
+                        <DataGridTemplateColumn Header="操作" Width="70">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Button Content="🗑️ 删除"
+                                            Style="{StaticResource AppleDeleteButtonStyle}"
+                                            Tag="{Binding}"
+                                            Click="DeleteRow_Click"
+                                            ToolTip="删除此行"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Border>
 
-                <!-- 导出 -->
-                <Button Content="导出"
-                        Width="80"
-                        Click="Export_Click"/>
-
-                <!-- WebDAV -->
-                <Button Content="WebDAV"
-                        Width="80"
-                        Margin="8,0,0,0"
-                        Click="WebDav_Click"/>
-
-                <!-- 状态点 -->
-                <Button x:Name="WebDavStatusBtn"
-                        Width="18"
-                        Height="18"
-                        Margin="6,0,0,0"
-                        Click="WebDavStatus_Click"
-                        Background="Gray"
-                        BorderThickness="0"
-                        ToolTip="WebDAV 状态">
-                    <Button.Template>
-                        <ControlTemplate TargetType="Button">
-                            <Grid>
-                                <Ellipse Fill="{TemplateBinding Background}" Stroke="Transparent"/>
-                            </Grid>
-                        </ControlTemplate>
-                    </Button.Template>
-                </Button>
-
+            <!-- 底部 -->
+            <StackPanel Grid.Row="2"
+                        Orientation="Horizontal"
+                        Margin="0,20,0,0">
+                <Button Content="➕ 新增一行"
+                        Style="{StaticResource AppleButtonStyle}"
+                        Click="AddRow_Click"/>
             </StackPanel>
-        </DockPanel>
-
-        <!-- 主表格 -->
-        <DataGrid x:Name="VaultGrid"
-                  Grid.Row="1"
-                  AutoGenerateColumns="False"
-                  CanUserAddRows="True"
-                  CanUserDeleteRows="True"
-                  IsReadOnly="False"
-                  SelectionUnit="Cell"
-                  ContextMenuOpening="VaultGrid_ContextMenuOpening"
-                  PreviewMouseLeftButtonDown="VaultGrid_PreviewMouseLeftButtonDown"
-                  PreviewMouseDoubleClick="VaultGrid_PreviewMouseDoubleClick"
-                  CellEditEnding="VaultGrid_CellEditEnding">
-
-            <!-- 右键菜单 -->
-            <DataGrid.ContextMenu>
-                <ContextMenu>
-                    <MenuItem Header="粘贴"
-                              Click="PasteMenuItem_Click"/>
-                </ContextMenu>
-            </DataGrid.ContextMenu>
-
-            <!-- 列定义 -->
-            <DataGrid.Columns>
-                <DataGridTextColumn Header="名称"
-                                    Binding="{Binding Name}"
-                                    Width="150"/>
-
-                <DataGridTextColumn Header="网站"
-                                    Binding="{Binding Url}"
-                                    Width="250"/>
-
-                <DataGridTextColumn Header="账号"
-                                    Binding="{Binding Account}"
-                                    Width="200"/>
-
-                <DataGridTextColumn Header="密码"
-                                    Binding="{Binding Password}"
-                                    Width="200"/>
-
-                <DataGridTextColumn Header="备注"
-                                    Binding="{Binding Remark}"
-                                    Width="*"/>
-            </DataGrid.Columns>
-        </DataGrid>
-    </Grid>
+        </Grid>
+    </Border>
 </Window>
